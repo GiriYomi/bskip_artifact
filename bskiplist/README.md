@@ -11,3 +11,6 @@ After compiling, run `./ycsb <path to ycsb files> <workload> <thread number> <ou
 Example command: `./ycsb /home/eddy/repo/ycsb/ a 16 out.txt`
 
 The througput or/and latency will be printed in the terminal
+
+
+./ycsb /Users/girigiri_yomi/Downloads/uniform a 16 out.txt

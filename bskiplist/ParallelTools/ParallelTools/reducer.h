@@ -143,17 +143,12 @@ template <class T> class Reducer_Vector {
 public:
   Reducer_Vector() { data.resize(ParallelTools::getWorkers()); }
   ~Reducer_Vector() {
-    // if the types are trivially destructable ensure that we don't delete them
-    // one at a time
+    // Cross-platform destructor without relying on implementation details
     if constexpr (std::is_trivially_destructible_v<T>) {
       for (auto &vec : data) {
-        typename std::_Vector_base<T, std::allocator<T>>::_Vector_impl
-            *vectorPtr =
-                (typename std::_Vector_base<T, std::allocator<T>>::_Vector_impl
-                     *)((void *)&vec.f);
-        delete vectorPtr->_M_start;
-        vectorPtr->_M_start = vectorPtr->_M_finish =
-            vectorPtr->_M_end_of_storage = nullptr;
+        // Use standard vector operations instead of accessing internal members
+        vec.f.clear();
+        vec.f.shrink_to_fit();
       }
     }
   }

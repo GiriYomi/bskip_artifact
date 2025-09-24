@@ -161,7 +161,7 @@ double findMedian(vector<double> &vec) {
 	}
 }
 
-template<int node_size = 1024, float p_scale = 0.5>
+template<int node_size = 1024, int p_scale_int = 50>
 void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 						   int num_thread, std::vector<uint64_t> &init_keys,
 						   std::vector<uint64_t> &keys,
@@ -252,6 +252,7 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 	std::vector<double> run_tpts;
 
 	int constexpr p = node_size / (sizeof(Key) + sizeof(TID));
+	float constexpr p_scale = p_scale_int / 100.0f;
 	int constexpr promotion_rate = static_cast<int>(p * p_scale);
 	using parallel_traits = BSkip_traits<true, p, promotion_rate, Key, TID>;
 
@@ -488,21 +489,21 @@ int main(int argc, char **argv) {
 	// ycsb_load_run_randint<1024, 1.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
 	// ycsb_load_run_randint<1024, 2.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
 	
-	ycsb_load_run_randint<2048, 0.5f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
+	ycsb_load_run_randint<2048, 50>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
 	
 	return 0;
-	ycsb_load_run_randint<2048, 1.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<2048, 2.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
+	ycsb_load_run_randint<2048, 100>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
+	ycsb_load_run_randint<2048, 200>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
 	
-	ycsb_load_run_randint<4096, 0.5f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<4096, 1.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<4096, 2.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
+	ycsb_load_run_randint<4096, 50>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
+	ycsb_load_run_randint<4096, 100>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
+	ycsb_load_run_randint<4096, 200>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
 	
 	return 0;
 	
-	ycsb_load_run_randint<8192, 0.5f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<8192, 1.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<8192, 2.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
+	ycsb_load_run_randint<8192, 50>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
+	ycsb_load_run_randint<8192, 100>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
+	ycsb_load_run_randint<8192, 200>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
 
 	return 0;
 }

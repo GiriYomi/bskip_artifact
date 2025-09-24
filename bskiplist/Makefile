@@ -28,10 +28,26 @@ CFLAGS += -fsanitize=undefined,address -fno-omit-frame-pointer
 endif
 endif
 
-LDFLAGS := -lrt -lm -lpthread -lm -ldl -latomic
+# Platform-specific linker flags
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+    LDFLAGS := -lrt -lm -lpthread -lm -ldl -latomic
+else ifeq ($(UNAME_S),Darwin)
+    LDFLAGS := -lm -lpthread -lm -ldl
+else
+    LDFLAGS := -lm -lpthread -lm -ldl -latomic
+endif
 
 ifeq ($(VALGRIND),0)
-CFLAGS += -march=native
+# Architecture-specific optimization flags
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),arm64)
+    # ARM64/Apple Silicon - use generic optimizations
+    CFLAGS += -mcpu=native
+else
+    # x86_64 and others
+    CFLAGS += -march=native
+endif
 endif
 
 DEFINES := -DENABLE_TRACE_TIMER=$(ENABLE_TRACE_TIMER) -DCYCLE_TIMER=$(CYCLE_TIMER) -DCILK=$(CILK) -DDEBUG=$(DEBUG) -DCORRECTNESS=$(CORRECTNESS)

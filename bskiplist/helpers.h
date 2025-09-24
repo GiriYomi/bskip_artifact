@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
-#include <immintrin.h>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -16,7 +15,10 @@
 #include <string>
 #include <sys/time.h>
 #include <vector>
+#ifdef __x86_64__
+#include <immintrin.h>
 #include <x86intrin.h>
+#endif
 #ifndef NDEBUG
 #define ASSERT(PREDICATE, ...)                                                 \
   do {                                                                         \
@@ -91,27 +93,43 @@ template <typename T> T *newA(size_t n) { return (T *)malloc(n * sizeof(T)); }
 
 // find index of first 1-bit (least significant bit)
 static inline uint32_t bsf_word(uint32_t word) {
+#ifdef __x86_64__
   uint32_t result;
   __asm__("bsf %1, %0" : "=r"(result) : "r"(word));
   return result;
+#else
+  return __builtin_ctz(word);
+#endif
 }
 
 static inline long bsf_long(long word) {
+#ifdef __x86_64__
   long result;
   __asm__("bsfq %1, %0" : "=r"(result) : "r"(word));
   return result;
+#else
+  return __builtin_ctzl(word);
+#endif
 }
 
 static inline int bsr_word(int word) {
+#ifdef __x86_64__
   int result;
   __asm__("bsr %1, %0" : "=r"(result) : "r"(word));
   return result;
+#else
+  return 31 - __builtin_clz((unsigned int)word);
+#endif
 }
 
 static inline uint64_t bsr_long(uint64_t word) {
+#ifdef __x86_64__
   long result;
   __asm__("bsrq %1, %0" : "=r"(result) : "r"(word));
   return static_cast<uint64_t>(result);
+#else
+  return 63 - __builtin_clzll(word);
+#endif
 }
 
 static constexpr uint64_t bsr_long_constexpr(uint64_t word) {
@@ -142,7 +160,15 @@ static constexpr inline uint64_t nextPowerOf2(uint64_t n) {
 
 //#define ENABLE_TRACE_TIMER
 #if CYCLE_TIMER == 1
+#ifdef __x86_64__
   static inline uint64_t get_usecs() { return __rdtsc(); }
+#else
+  static inline uint64_t get_usecs() {
+    struct timeval st {};
+    gettimeofday(&st, nullptr);
+    return static_cast<uint64_t>(st.tv_sec * 1000000 + st.tv_usec);
+  }
+#endif
 #else
   static inline uint64_t get_usecs() {
     struct timeval st {};
@@ -183,24 +209,22 @@ inline std::string Join(std::vector<std::string> const &elements,
   return out;
 }
 
+// Cross-platform vector wrapper functions
 template <class T>
 void wrapArrayInVector(T *sourceArray, size_t arraySize,
                        std::vector<T, std::allocator<T>> &targetVector) {
-  typename std::_Vector_base<T, std::allocator<T>>::_Vector_impl *vectorPtr =
-      (typename std::_Vector_base<T, std::allocator<T>>::_Vector_impl *)((
-          void *)&targetVector);
-  vectorPtr->_M_start = sourceArray;
-  vectorPtr->_M_finish = vectorPtr->_M_end_of_storage =
-      vectorPtr->_M_start + arraySize;
+  // Use standard C++ approach instead of implementation-specific internals
+  targetVector.clear();
+  targetVector.reserve(arraySize);
+  for (size_t i = 0; i < arraySize; ++i) {
+    targetVector.push_back(sourceArray[i]);
+  }
 }
 
 template <class T>
 void releaseVectorWrapper(std::vector<T, std::allocator<T>> &targetVector) {
-  typename std::_Vector_base<T, std::allocator<T>>::_Vector_impl *vectorPtr =
-      (typename std::_Vector_base<T, std::allocator<T>>::_Vector_impl *)((
-          void *)&targetVector);
-  vectorPtr->_M_start = vectorPtr->_M_finish = vectorPtr->_M_end_of_storage =
-      NULL;
+  targetVector.clear();
+  targetVector.shrink_to_fit();
 }
 
 template <class T> T prefix_sum_inclusive(std::vector<T> &data) {
@@ -233,15 +257,12 @@ template <class T> inline void Log(const __m128i &value) {
 #endif
 
 static uint64_t tzcnt(uint64_t num) {
-#ifdef __BMI__
+#if defined(__BMI__) && defined(__x86_64__)
   return _tzcnt_u64(num);
+#else
+  if (num == 0) return 64;
+  return __builtin_ctzll(num);
 #endif
-  uint64_t count = 0;
-  while ((num & 1) == 0) {
-    count += 1;
-    num >>= 1;
-  }
-  return count;
 }
 
 [[nodiscard]] inline uint64_t e_index(uint64_t index, uint64_t length) {

@@ -34,6 +34,16 @@
 #include "StructOfArrays/soa.hpp"
 #include "tools.h"
 
+// Cross-platform CPU ID function
+static inline int get_cpu_id() {
+#ifdef __linux__
+  return sched_getcpu();
+#else
+  // For non-Linux systems, use ParallelTools worker number or return 0
+  return ParallelTools::getWorkerNum();
+#endif
+}
+
 // TODO: replace with SOA for vals
 #define BINARY_SEARCH 0
 
@@ -856,6 +866,8 @@ uint32_t BSkip<traits>::flip_coins(K k)
     return result;
 }
 
+// EVOLVE-BLOCK-START
+
 template <typename traits>
 #if ENABLE_TRACE_TIMER
 uint64_t BSkip<traits>::insert(traits::element_type k)
@@ -879,7 +891,7 @@ bool BSkip<traits>::insert(traits::element_type k)
     }
 
     // int cpuid = ParallelTools::getWorkerNum();
-    int cpuid = sched_getcpu();
+    int cpuid = get_cpu_id();
     ReaderWriterLock *parent_lock = nullptr;
 
     // flip coins to determine your promotion level
@@ -1666,6 +1678,8 @@ bool BSkip<traits>::insert(traits::element_type k)
     return true;
 }
 
+// EVOLVE-BLOCK-END
+
 template <typename traits>
 BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
 {
@@ -1677,7 +1691,7 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
 #endif
 
     // int cpuid = ParallelTools::getWorkerNum();
-    int cpuid = sched_getcpu();
+    int cpuid = get_cpu_id();
     ReaderWriterLock *parent_lock = nullptr;
 
     // start search from the top node
@@ -1843,7 +1857,7 @@ traits::value_type BSkip<traits>::value(traits::key_type k) const
 #endif
 
     // int cpuid = ParallelTools::getWorkerNum();
-    int cpuid = sched_getcpu();
+    int cpuid = get_cpu_id();
     ReaderWriterLock *parent_lock = nullptr;
 
     // start search from the top node
@@ -2088,7 +2102,7 @@ void BSkip<traits>::map_range(traits::key_type min, traits::key_type max, F f) c
 {
     // Concurrency mechanisms
     // int cpuid = ParallelTools::getWorkerNum();
-    int cpuid = sched_getcpu();
+    int cpuid = get_cpu_id();
     ReaderWriterLock *parent_lock = nullptr;
 
     // Sequential
@@ -2278,7 +2292,7 @@ template <class F>
 void BSkip<traits>::map_range_length(traits::key_type start, uint64_t length, F f) const
 {
     // Concurrency mechanisms
-    int cpuid = sched_getcpu();
+    int cpuid = get_cpu_id();
     ReaderWriterLock *parent_lock = nullptr;
 
     // Get node with starting element that is at least start
