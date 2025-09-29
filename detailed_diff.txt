@@ -1,0 +1,585 @@
+--- bskiplist/bskip.h	2025-09-24 14:21:21
++++ bskiplist/openevolve_output/best/best_program.h	2025-09-29 14:30:51
+@@ -905,41 +905,35 @@
+     uint32_t parent_rank;
+ #endif
+ 
+-    // init all the new nodes you will need due to promotion split
+-    BSkipNode<traits>*  new_nodes[level_to_promote];
+-    if (level_to_promote > 1)
+-    {
+-        for (uint32_t i = 0; i < level_to_promote - 1; i++)
+-        {
+-            auto n = new BSkipNodeInternal<traits>();
+-            if constexpr (traits::concurrent)
+-            {
+-                // lock_timer.start();
+-                n->mutex_.write_lock();
+-                // lock_timer.stop();
++    // Lazily allocate promoted nodes on demand to avoid unnecessary allocation on updates and short traversals
++    BSkipNode<traits>*  new_nodes[level_to_promote ? level_to_promote : 1];
++    for (uint32_t i = 0; i < (level_to_promote ? level_to_promote : 1); ++i) { new_nodes[i] = nullptr; }
++    auto ensure_new_node = [&](uint32_t idx, uint32_t curr_level) -> BSkipNode<traits>* {
++        if (idx >= (level_to_promote ? level_to_promote : 1)) return nullptr;
++        if (new_nodes[idx] != nullptr) return new_nodes[idx];
++        BSkipNode<traits>* n = nullptr;
++        if (curr_level > 0) {
++            n = new BSkipNodeInternal<traits>();
++            if constexpr (traits::concurrent) {
++                ((BSkipNodeInternal<traits>*)n)->mutex_.write_lock();
+                 #if STATS
+                 write_lock_counter++;
+                 #endif
+             }
+-            new_nodes[i] = n;
++        } else {
++            n = new BSkipNodeLeaf<traits>();
++            if constexpr (traits::concurrent) {
++                ((BSkipNodeLeaf<traits>*)n)->mutex_.write_lock();
++                #if STATS
++                write_lock_counter++;
++                #endif
++            }
+         }
+-    }
++        n->level = curr_level;
++        new_nodes[idx] = n;
++        return n;
++    };
+ 
+-    if (level_to_promote > 0)
+-    {
+-        auto n = new BSkipNodeLeaf<traits>();
+-        if constexpr (traits::concurrent)
+-        {
+-            // lock_timer.start();
+-            n->mutex_.write_lock();
+-            // lock_timer.stop();
+-            #if STATS
+-            write_lock_counter++;
+-            #endif
+-        }
+-        new_nodes[level_to_promote - 1] = n;
+-    }
+-
+     uint32_t num_split = 0;
+ 
+     assert(level_to_promote < MAX_HEIGHT);
+@@ -982,27 +976,18 @@
+             // lock_timer.start();
+             if (level > 0)
+             {
+-                if (level_to_promote < level)
+-                {
+-                    ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_lock(cpuid);
+-                   	#if STATS
+-                    	read_lock_counter++;
+-                    #endif
++                // Always traverse internal levels with read locks; upgrade only when needed
++                ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_lock(cpuid);
++                #if STATS
++                read_lock_counter++;
++                #endif
+ #if ENABLE_TRACE_TIMER
+-                    read_lock_count.inc();
++                read_lock_count.inc();
+ #endif
+-                }
+-                else
+-                {
+-                    ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.write_lock();
+-                    #if STATS
+-                    write_lock_counter++;
+-                    #endif
+-                }
+             }
+             else
+             {
+-                // if at a leaf, lock yourself
++                // Leaves still take write lock since we might update/insert
+                 ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_lock();
+                 #if STATS
+                 write_lock_counter++;
+@@ -1060,30 +1045,22 @@
+                      "key = %lu, curr node header = %lu, next node header = %lu\n", k,
+                      curr_node->get_header(), curr_node->next->get_header());
+ 
++#if defined(__GNUC__)
++            __builtin_prefetch(curr_node->next ? curr_node->next->next : nullptr, 0, 1);
++#endif
+             // grab next step in the search
+             if constexpr (traits::concurrent)
+             {
+                 if (level > 0)
+                 {
+-                    if (level_to_promote < level)
+-                    {
+-                   	#if STATS
+-                    	read_lock_counter++;
++                    #if STATS
++                    read_lock_counter++;
+                     #endif
+-                        ((BSkipNodeInternal<traits> *)(curr_node->next))
+-                            ->mutex_.read_lock(cpuid);
++                    ((BSkipNodeInternal<traits> *)(curr_node->next))
++                        ->mutex_.read_lock(cpuid);
+ #if ENABLE_TRACE_TIMER
+-                        read_lock_count.inc();
++                    read_lock_count.inc();
+ #endif
+-                    }
+-                    else
+-                    {
+-                        ((BSkipNodeInternal<traits> *)(curr_node->next))
+-                            ->mutex_.write_lock();
+-                        #if STATS
+-                        write_lock_counter++;
+-                        #endif
+-                    }
+                 }
+                 else
+                 {
+@@ -1105,24 +1082,14 @@
+             // unlock prev node
+             if constexpr (traits::concurrent)
+             {
+-                // lock_timer.start();
+                 if (level > 0)
+                 {
+-                    if (level_to_promote < level)
+-                    {
+-                        ((BSkipNodeInternal<traits> *)(prev_node))
+-                            ->mutex_.read_unlock(cpuid);
+-                    }
+-                    else
+-                    {
+-                        ((BSkipNodeInternal<traits> *)(prev_node))->mutex_.write_unlock();
+-                    }
++                    ((BSkipNodeInternal<traits> *)(prev_node))->mutex_.read_unlock(cpuid);
+                 }
+                 else
+                 {
+                     ((BSkipNodeLeaf<traits> *)(prev_node))->mutex_.write_unlock();
+                 }
+-                // lock_timer.stop();
+             }
+         }
+         tbassert(curr_node->get_header() <= key,
+@@ -1137,119 +1104,85 @@
+         // if the key was found
+         if (found_key)
+         {
+-            // release your lock and do nothing else in the key-only mode
+-            if constexpr (traits::concurrent)
+-            {
+-                // lock_timer.start();
+-                if (level > 0)
+-                {
+-                    if (level_to_promote < level)
+-                    {
+-                        ((BSkipNodeInternal<traits> *)(curr_node))
+-                            ->mutex_.read_unlock(cpuid);
+-                    }
+-                    else
+-                    {
+-                        ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.write_unlock();
+-                    }
+-                }
+-                else
+-                {
+-                    ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
+-                }
+-                // lock_timer.stop();
+-            }
+-
+-            // check if map or set
++            // Map semantics: update value in-place without extra unlock/relock
+             if constexpr (!traits::binary)
+             {
++                // If already at leaf, update and return
+                 if (level == 0)
+                 {
+-                    if constexpr (traits::concurrent)
+-                    {
+-                        ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_lock();
+-                        #if STATS
+-                        write_lock_counter++;
+-                        #endif
+-                    }
+-                    // change leaf value
+                     ((BSkipNodeLeaf<traits> *)curr_node)->blind_write(k, rank);
+                     if constexpr (traits::concurrent)
+                     {
+                         ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
+                     }
++                    return true;
+                 }
+-                else
++
++                // We are at an internal level holding a lock on curr_node.
++                // Descend with hand-over-hand locking, avoiding a premature unlock.
++                bool parent_is_write = (level_to_promote >= level);
++                while (curr_node->level > 1)
+                 {
+-                    // curr_node is internal, need to traverse down to the leaf
++                    auto next_child =
++                        ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
+                     if constexpr (traits::concurrent)
+                     {
+-                   	#if STATS
+-                    	read_lock_counter++;
++                    #if STATS
++                        read_lock_counter++;
+                     #endif
+-                        ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_lock(cpuid);
+-                    }
+-                    bool flag = true;
+-                    while (curr_node->level > 1)
+-                    {
+-                        prev_node = curr_node;
+-                        if (flag)
++                        ((BSkipNodeInternal<traits> *)next_child)->mutex_.read_lock(cpuid);
++                        if (parent_is_write)
+                         {
+-                            curr_node = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
+-                            flag = false;
++                            ((BSkipNodeInternal<traits> *)curr_node)->mutex_.write_unlock();
+                         }
+                         else
+                         {
+-                            curr_node = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(0);
++                            ((BSkipNodeInternal<traits> *)curr_node)->mutex_.read_unlock(cpuid);
+                         }
+-                        if constexpr (traits::concurrent)
+-                        {
+-   	                   	#if STATS
+-                        	read_lock_counter++;
+-                        #endif
+-                            // lock curr
+-                            ((BSkipNodeInternal<traits> *)curr_node)->mutex_.read_lock(cpuid);
+-                            // unlock prev
+-                            ((BSkipNodeInternal<traits> *)prev_node)->mutex_.read_unlock(cpuid);
+-                        }
+                     }
++                    curr_node = next_child;
++                    parent_is_write = false; // subsequent internals use read locks
++                    rank = 0;                // key is the first in the child range
++                }
+ 
+-                    // now level = 1, curr_node is internal and locked
+-                    assert(curr_node->level == 1);
+-
+-                    prev_node = curr_node;
+-
+-                    if (flag)
++                // Now at level 1 internal; acquire leaf write, then unlock internal
++                auto leaf =
++                    ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
++                if constexpr (traits::concurrent)
++                {
++                    ((BSkipNodeLeaf<traits> *)leaf)->mutex_.write_lock();
++                    #if STATS
++                    write_lock_counter++;
++                    #endif
++                    ((BSkipNodeInternal<traits> *)curr_node)->mutex_.read_unlock(cpuid);
++                }
++                ((BSkipNodeLeaf<traits> *)leaf)->blind_write(k, 0);
++                if constexpr (traits::concurrent)
++                {
++                    ((BSkipNodeLeaf<traits> *)leaf)->mutex_.write_unlock();
++                }
++                return true;
++            }
++
++            // Set semantics: nothing to update; just release current lock and return
++            if constexpr (traits::concurrent)
++            {
++                if (level > 0)
++                {
++                    if (level_to_promote < level)
+                     {
+-                        curr_node = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
++                        ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_unlock(cpuid);
+                     }
+                     else
+                     {
+-                        curr_node = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(0);
++                        ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.write_unlock();
+                     }
+-
+-                    if constexpr (traits::concurrent)
+-                    {
+-                        // lock curr
+-                        ((BSkipNodeLeaf<traits> *)curr_node)->mutex_.write_lock();
+-                        #if STATS
+-                        write_lock_counter++;
+-                        #endif
+-                        // unlock prev
+-                        ((BSkipNodeInternal<traits> *)prev_node)->mutex_.read_unlock(cpuid);
+-                    }
+-
+-                    // change leaf value
+-                    assert(curr_node->level == 0);
+-                    ((BSkipNodeLeaf<traits> *)curr_node)->blind_write(k, 0);
+-
+-                    if constexpr (traits::concurrent)
+-                    {
+-                        ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
+-                    }
+                 }
++                else
++                {
++                    ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
++                }
+             }
+-
+             return true;
+         }
+         else
+@@ -1280,14 +1213,66 @@
+                     // lock_timer.stop();
+                 }
+ 
+-                curr_node =
+-                    ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
++                auto child = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
++#if defined(__GNUC__)
++                __builtin_prefetch(child, 0, 1);
++#endif
++                curr_node = child;
+ 
+                 assert(curr_node != NULL);
+                 continue;
+             }
+             else if (level_to_promote == level)
+             {
++                // We will modify this internal level. Upgrade from read to write and re-validate.
++                if constexpr (traits::concurrent)
++                {
++                    if (level > 0)
++                    {
++                        ((BSkipNodeInternal<traits> *)curr_node)->mutex_.read_unlock(cpuid);
++                        ((BSkipNodeInternal<traits> *)curr_node)->mutex_.write_lock();
++                        #if STATS
++                        write_lock_counter++;
++                        #endif
++                        // Recompute position in case of concurrent changes
++                        auto __rf = curr_node->find_key_and_check(key);
++                        rank = __rf.first;
++                        bool __f = __rf.second;
++                        if (__f)
++                        {
++                            // Another thread inserted the key meanwhile. Honor map semantics by updating the leaf.
++                            if constexpr (!traits::binary)
++                            {
++                                // Descend with hand-over-hand read locks; release current write as we go
++                                while (curr_node->level > 1)
++                                {
++                                    auto next_child = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
++                                    #if STATS
++                                    read_lock_counter++;
++                                    #endif
++                                    ((BSkipNodeInternal<traits> *)next_child)->mutex_.read_lock(cpuid);
++                                    ((BSkipNodeInternal<traits> *)curr_node)->mutex_.write_unlock();
++                                    curr_node = next_child;
++                                    rank = 0;
++                                }
++                                auto leaf = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
++                                ((BSkipNodeLeaf<traits> *)leaf)->mutex_.write_lock();
++                                #if STATS
++                                write_lock_counter++;
++                                #endif
++                                ((BSkipNodeInternal<traits> *)curr_node)->mutex_.read_unlock(cpuid);
++                                ((BSkipNodeLeaf<traits> *)leaf)->blind_write(k, 0);
++                                ((BSkipNodeLeaf<traits> *)leaf)->mutex_.write_unlock();
++                                return true;
++                            }
++                            else
++                            {
++                                ((BSkipNodeInternal<traits> *)curr_node)->mutex_.write_unlock();
++                                return true;
++                            }
++                        }
++                    }
++                }
+                 // Case 2: insert but not split due to promotion
+                 // split if overfull
+                 if (curr_node->num_elts + 1 > traits::MAX_KEYS)
+@@ -1329,13 +1314,18 @@
+                     curr_node->next = new_node;
+                     new_node->level = level;
+ 
+-                    // do the split
+-                    int half_keys = curr_node->num_elts / 2;
++                    // do the split with an adaptive pivot and spare capacity
++                    uint32_t n = curr_node->num_elts;
++                    uint32_t ins_pos = rank + 1;
++                    // keep at least 25% occupancy on each side to reduce cascade splits
++                    uint32_t min_keep = (n >= 4) ? (n >> 2) : 1;
++                    uint32_t max_keep = n - min_keep;
++                    uint32_t pivot = ins_pos;
++                    if (pivot < min_keep) pivot = min_keep;
++                    if (pivot > max_keep) pivot = max_keep;
+ 
+-                    // move second half of keys into new node
+-                    // returns the number of elements that were moved
+-                    // updates the number of elts in each node
+-                    uint32_t elts_moved = curr_node->split_keys(new_node, half_keys, 0);
++                    // move suffix starting from pivot into new node
++                    uint32_t elts_moved = curr_node->split_keys(new_node, pivot, 0);
+                     curr_node->next_header = new_node->get_header();
+ 
+                     // move children if necessary
+@@ -1343,7 +1333,7 @@
+                     {
+                         ((BSkipNodeInternal<traits> *)curr_node)
+                             ->move_children(((BSkipNodeInternal<traits> *)new_node),
+-                                            half_keys, elts_moved, 0);
++                                            pivot, elts_moved, 0);
+                     }
+ 
+ #if DEBUG_PRINT
+@@ -1397,8 +1387,7 @@
+                             BSkipNodeInternal<traits> *curr_node_cast =
+                                 (BSkipNodeInternal<traits> *)curr_node;
+                             // point to the first split node
+-                            curr_node_cast->insert_child_at_rank(rank + 1,
+-                                                                 new_nodes[num_split]);
++                            curr_node_cast->insert_child_at_rank(rank + 1, ensure_new_node(num_split, level - 1));
+                             if constexpr (traits::concurrent)
+                             {
+                                 // lock_timer.start();
+@@ -1409,7 +1398,13 @@
+ #endif
+                                 // lock_timer.stop();
+                             }
+-                            curr_node = curr_node_cast->get_child_at_rank(rank);
++                            {
++                                auto child = curr_node_cast->get_child_at_rank(rank);
++#if defined(__GNUC__)
++                                __builtin_prefetch(child, 0, 1);
++#endif
++                                curr_node = child;
++                            }
+                         }
+                     }
+                     else
+@@ -1459,8 +1454,7 @@
+                         {
+                             BSkipNodeInternal<traits> *new_node_cast =
+                                 (BSkipNodeInternal<traits> *)new_node;
+-                            new_node_cast->insert_child_at_rank(rank_to_insert + 1,
+-                                                                new_nodes[num_split]);
++                            new_node_cast->insert_child_at_rank(rank_to_insert + 1, ensure_new_node(num_split, level - 1));
+                             if constexpr (traits::concurrent)
+                             {
+                                 // lock_timer.start();
+@@ -1473,7 +1467,13 @@
+                             }
+ 
+                             // drop down to next level
+-                            curr_node = new_node_cast->get_child_at_rank(rank_to_insert);
++                            {
++                                auto child = new_node_cast->get_child_at_rank(rank_to_insert);
++#if defined(__GNUC__)
++                                __builtin_prefetch(child, 0, 1);
++#endif
++                                curr_node = child;
++                            }
+ 
+                             assert(curr_node);
+                             assert(curr_node->get_header() ==
+@@ -1515,8 +1515,7 @@
+                         // update the down pointer for the new elt
+                         assert(num_split == 0);
+                         assert(rank < curr_node->num_elts);
+-                        curr_node_cast->insert_child_at_rank(rank + 1,
+-                                                             new_nodes[num_split], false);
++                        curr_node_cast->insert_child_at_rank(rank + 1, ensure_new_node(num_split, level - 1), false);
+ 
+                         // keep track of the lock
+                         if constexpr (traits::concurrent)
+@@ -1549,11 +1548,58 @@
+             }
+             else
+             { // case 3: do a split
++                // We will modify this internal level. Upgrade from read to write and re-validate.
++                if constexpr (traits::concurrent)
++                {
++                    if (level > 0)
++                    {
++                        ((BSkipNodeInternal<traits> *)curr_node)->mutex_.read_unlock(cpuid);
++                        ((BSkipNodeInternal<traits> *)curr_node)->mutex_.write_lock();
++                        #if STATS
++                        write_lock_counter++;
++                        #endif
++                        auto __rf2 = curr_node->find_key_and_check(key);
++                        rank = __rf2.first;
++                        bool __f2 = __rf2.second;
++                        if (__f2)
++                        {
++                            // Key appeared concurrently; perform value update if needed
++                            if constexpr (!traits::binary)
++                            {
++                                while (curr_node->level > 1)
++                                {
++                                    auto next_child = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
++                                    #if STATS
++                                    read_lock_counter++;
++                                    #endif
++                                    ((BSkipNodeInternal<traits> *)next_child)->mutex_.read_lock(cpuid);
++                                    ((BSkipNodeInternal<traits> *)curr_node)->mutex_.write_unlock();
++                                    curr_node = next_child;
++                                    rank = 0;
++                                }
++                                auto leaf = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
++                                ((BSkipNodeLeaf<traits> *)leaf)->mutex_.write_lock();
++                                #if STATS
++                                write_lock_counter++;
++                                #endif
++                                ((BSkipNodeInternal<traits> *)curr_node)->mutex_.read_unlock(cpuid);
++                                ((BSkipNodeLeaf<traits> *)leaf)->blind_write(k, 0);
++                                ((BSkipNodeLeaf<traits> *)leaf)->mutex_.write_unlock();
++                                return true;
++                            }
++                            else
++                            {
++                                ((BSkipNodeInternal<traits> *)curr_node)->mutex_.write_unlock();
++                                return true;
++                            }
++                        }
++                    }
++                }
+ #if DEBUG_PRINT
+                 printf("split at level %d with elt %lu\n", level, key);
+ #endif
+                 assert(level_to_promote > level);
+-                BSkipNode<traits> *new_node = new_nodes[num_split];
++                BSkipNode<traits> *new_node = ensure_new_node(num_split, level);
+                 num_split++;
+ 
+                 assert(new_node);
+@@ -1595,7 +1641,7 @@
+                 if (level > 0)
+                 {
+                     ((BSkipNodeInternal<traits> *)new_node)
+-                        ->insert_child_at_rank(0, new_nodes[num_split]);
++                        ->insert_child_at_rank(0, ensure_new_node(num_split, level - 1));
+ 
+                     ((BSkipNodeInternal<traits> *)curr_node)
+                         ->move_children(((BSkipNodeInternal<traits> *)new_node), rank + 1,
+@@ -1650,7 +1696,13 @@
+                     }
+ 
+                     // drop down one level
+-                    curr_node = curr_node_cast->get_child_at_rank(rank);
++                    {
++                        auto child = curr_node_cast->get_child_at_rank(rank);
++#if defined(__GNUC__)
++                        __builtin_prefetch(child, 0, 1);
++#endif
++                        curr_node = child;
++                    }
+                     assert(curr_node);
+                 }
+             }

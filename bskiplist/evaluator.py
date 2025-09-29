@@ -23,10 +23,20 @@ def _compile_candidate(candidate_program_path: str, make_env: Optional[Dict[str,
     artifacts: Dict[str, Any] = {"compile": {}}
     original_backup_path: Optional[str] = None
 
-    # Determine target file based on extension
-    candidate_is_header = candidate_program_path.endswith(".h") or candidate_program_path.endswith(".hpp")
+    # FIXED: Always treat as header file for bskip project since OpenEvolve creates .py temp files
+    # but we're always working with C++ header code
+    candidate_is_header = True  # Force header detection for bskip.h replacement
     target_path = BSKIP_HEADER_PATH if candidate_is_header else YSCSB_CPP_PATH
+    
+    # Create process-safe lock file to prevent parallel evaluation conflicts
+    import fcntl
+    lock_file_path = os.path.join(BSKIP_DIR, ".evaluation_lock")
+    lock_file = None
     try:
+        # Acquire exclusive lock to prevent parallel evaluation conflicts
+        lock_file = open(lock_file_path, 'w')
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        
         # Backup original source
         if os.path.exists(target_path):
             fd, original_backup_path = tempfile.mkstemp(
@@ -61,28 +71,104 @@ def _compile_candidate(candidate_program_path: str, make_env: Optional[Dict[str,
         if not os.path.exists(YSCSB_BIN_PATH):
             raise FileNotFoundError("Built binary 'ycsb' not found")
 
-    finally:
-        # Always restore original source if we backed it up
+        # Store restoration info but don't restore yet - let caller handle it
+        artifacts["restore_info"] = {
+            "original_backup_path": original_backup_path,
+            "target_path": target_path,
+            "lock_file": lock_file,
+            "lock_file_path": lock_file_path
+        }
+
+    except Exception as e:
+        # On error, restore immediately
         if original_backup_path and os.path.exists(original_backup_path):
             try:
                 shutil.copy2(original_backup_path, target_path)
-            finally:
-                try:
-                    os.remove(original_backup_path)
-                except Exception:
-                    pass
+                os.remove(original_backup_path)
+            except Exception:
+                pass
+        
+        # Release lock on error
+        if lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                lock_file.close()
+                os.remove(lock_file_path)
+            except Exception:
+                pass
+        raise
 
     return artifacts
 
 
-def _run_benchmark(dataset_dir: str, workload: str, threads: int, output_file: str) -> Dict[str, Any]:
+def _restore_original(restore_info: Dict[str, Any]) -> None:
+    """Restore original files and release locks"""
+    original_backup_path = restore_info.get("original_backup_path")
+    target_path = restore_info.get("target_path")
+    lock_file = restore_info.get("lock_file")
+    lock_file_path = restore_info.get("lock_file_path")
+    
+    # Restore original source
+    if original_backup_path and os.path.exists(original_backup_path):
+        try:
+            shutil.copy2(original_backup_path, target_path)
+            os.remove(original_backup_path)
+        except Exception:
+            pass
+    
+    # Release lock
+    if lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
+            if os.path.exists(lock_file_path):
+                os.remove(lock_file_path)
+        except Exception:
+            pass
+
+
+def _run_benchmark(dataset_dir: str, workload: str, threads: int, output_file: str, num_runs: int = 1) -> Dict[str, Any]:
+    """Run benchmark multiple times and return aggregated results for stability"""
     artifacts: Dict[str, Any] = {"run": {}}
-    cmd = ["./ycsb", dataset_dir, workload, str(threads), output_file]
-    proc = subprocess.run(cmd, cwd=BSKIP_DIR, capture_output=True, text=True)
-    artifacts["run"]["rc"] = proc.returncode
-    artifacts["run"]["stdout"] = proc.stdout
-    artifacts["run"]["stderr"] = proc.stderr
-    artifacts["run"]["cmd"] = " ".join(cmd)
+    all_stdout = []
+    all_stderr = []
+    
+    # Verify binary exists before running
+    if not os.path.exists(YSCSB_BIN_PATH):
+        artifacts["run"]["rc"] = 1
+        artifacts["run"]["stdout"] = ""
+        artifacts["run"]["stderr"] = f"Binary {YSCSB_BIN_PATH} not found"
+        artifacts["run"]["cmd"] = f"Binary check failed"
+        return artifacts
+    
+    for run_i in range(num_runs):
+        # Check binary exists for each run (in case of race conditions)
+        if not os.path.exists(YSCSB_BIN_PATH):
+            artifacts["run"]["rc"] = 1
+            artifacts["run"]["stdout"] = ""
+            artifacts["run"]["stderr"] = f"Binary {YSCSB_BIN_PATH} disappeared during run {run_i}"
+            artifacts["run"]["cmd"] = f"Run {run_i} binary check failed"
+            return artifacts
+            
+        cmd = ["./ycsb", dataset_dir, workload, str(threads), f"{output_file}.run{run_i}"]
+        proc = subprocess.run(cmd, cwd=BSKIP_DIR, capture_output=True, text=True)
+        
+        if proc.returncode != 0:
+            artifacts["run"]["rc"] = proc.returncode
+            artifacts["run"]["stdout"] = proc.stdout
+            artifacts["run"]["stderr"] = proc.stderr
+            artifacts["run"]["cmd"] = " ".join(cmd)
+            return artifacts
+            
+        all_stdout.append(proc.stdout)
+        all_stderr.append(proc.stderr)
+    
+    # Combine all outputs
+    artifacts["run"]["rc"] = 0
+    artifacts["run"]["stdout"] = "\n".join(all_stdout)
+    artifacts["run"]["stderr"] = "\n".join(all_stderr)
+    artifacts["run"]["cmd"] = f"Multiple runs: {num_runs}"
+    artifacts["run"]["num_runs"] = num_runs
     return artifacts
 
 
@@ -152,6 +238,7 @@ def evaluate(program_path: str) -> EvaluationResult:
 
     if not dataset_dir:
         artifacts["error"] = "BSKIP_DATASET_DIR not set. Cannot run ycsb without dataset."
+        print("[candidate Eval Error] BSKIP_DATASET_DIR not set. Cannot run ycsb without dataset.")
         return EvaluationResult(metrics={"combined_score": 0.0, "candidate_runs_successfully": 0.0}, artifacts=artifacts)
 
     # Optionally set LATENCY via environment for make
@@ -165,11 +252,14 @@ def evaluate(program_path: str) -> EvaluationResult:
         artifacts.update(base_build_art)
     except Exception as e:
         artifacts["baseline_compile_error"] = str(e)
+        print("[baseline Eval Error] Baseline compile failed")
         return EvaluationResult(metrics={"combined_score": 0.0, "baseline_runs_successfully": 0.0, "candidate_runs_successfully": 0.0}, artifacts=artifacts)
 
-    base_run_art = _run_benchmark(dataset_dir=dataset_dir, workload=workload, threads=threads, output_file=output_file)
+    # Run baseline multiple times for stability (3 runs to reduce variance)
+    base_run_art = _run_benchmark(dataset_dir=dataset_dir, workload=workload, threads=threads, output_file=output_file, num_runs=3)
     artifacts.update({"baseline_run": base_run_art.get("run", {})})
     if base_run_art.get("run", {}).get("rc", 1) != 0:
+        print("[baseline Eval Error] Baseline run failed")
         metrics.update({"baseline_runs_successfully": 0.0, "candidate_runs_successfully": 0.0, "combined_score": 0.0})
         return EvaluationResult(metrics=metrics, artifacts=artifacts)
 
@@ -179,38 +269,67 @@ def evaluate(program_path: str) -> EvaluationResult:
     metrics["baseline_runs_successfully"] = 1.0
 
     # Compile candidate and run
+    restore_info = None
     try:
         cand_build_art = _compile_candidate(program_path, make_env=make_env)
         artifacts.update(cand_build_art)
+        restore_info = cand_build_art.get("restore_info")
     except Exception as e:
         artifacts["candidate_compile_error"] = str(e)
         # If candidate cannot compile, treat as no improvement
+        print("[candidate Eval Error] Candidate compile failed")
         metrics.update({"candidate_runs_successfully": 0.0, "combined_score": 0.0})
         return EvaluationResult(metrics=metrics, artifacts=artifacts)
 
-    cand_run_art = _run_benchmark(dataset_dir=dataset_dir, workload=workload, threads=threads, output_file=output_file)
-    artifacts.update(cand_run_art)
-    if cand_run_art.get("run", {}).get("rc", 1) != 0:
-        metrics.update({"candidate_runs_successfully": 0.0, "combined_score": 0.0})
-        return EvaluationResult(metrics=metrics, artifacts=artifacts)
+    try:
+        # Run candidate multiple times for stability (3 runs to reduce variance)
+        cand_run_art = _run_benchmark(dataset_dir=dataset_dir, workload=workload, threads=threads, output_file=output_file, num_runs=3)
+        artifacts.update(cand_run_art)
+        if cand_run_art.get("run", {}).get("rc", 1) != 0:
+            print("[candidate Eval Error] Candidate run failed")
+            metrics.update({"candidate_runs_successfully": 0.0, "combined_score": 0.0})
+            return EvaluationResult(metrics=metrics, artifacts=artifacts)
+    finally:
+        # Always restore original files after benchmarking
+        if restore_info:
+            _restore_original(restore_info)
 
     candidate_stdout = cand_run_art.get("run", {}).get("stdout", "")
     candidate_metrics = _parse_throughput(candidate_stdout, prefix="candidate")
     metrics.update(candidate_metrics)
     metrics["candidate_runs_successfully"] = 1.0
 
-    # Compute percentage speedup based on median run throughput (fallback to avg run)
+    # Compute percentage speedup for both load and run throughput
     eps = 1e-12
-    base_key = "baseline_median_run_ops_per_us" if "baseline_median_run_ops_per_us" in metrics else "baseline_avg_run_ops_per_us"
-    cand_key = "candidate_median_run_ops_per_us" if "candidate_median_run_ops_per_us" in metrics else "candidate_avg_run_ops_per_us"
-    base_val = float(metrics.get(base_key, 0.0))
-    cand_val = float(metrics.get(cand_key, 0.0))
-    if base_val > eps:
-        percent_speedup = (cand_val - base_val) / base_val * 100.0
+    
+    # Calculate load speedup (median load throughput)
+    base_load_key = "baseline_median_load_ops_per_us"
+    cand_load_key = "candidate_median_load_ops_per_us"
+    base_load_val = float(metrics.get(base_load_key, 0.0))
+    cand_load_val = float(metrics.get(cand_load_key, 0.0))
+    if base_load_val > eps:
+        load_speedup = (cand_load_val - base_load_val) / base_load_val * 100.0
     else:
-        percent_speedup = 0.0
-    metrics["combined_score"] = float(percent_speedup)
-    metrics["percent_speedup_run_throughput"] = float(percent_speedup)
+        load_speedup = 0.0
+    
+    # Calculate run speedup (median run throughput, fallback to avg run)
+    base_run_key = "baseline_median_run_ops_per_us" if "baseline_median_run_ops_per_us" in metrics else "baseline_avg_run_ops_per_us"
+    cand_run_key = "candidate_median_run_ops_per_us" if "candidate_median_run_ops_per_us" in metrics else "candidate_avg_run_ops_per_us"
+    base_run_val = float(metrics.get(base_run_key, 0.0))
+    cand_run_val = float(metrics.get(cand_run_key, 0.0))
+    if base_run_val > eps:
+        run_speedup = (cand_run_val - base_run_val) / base_run_val * 100.0
+    else:
+        run_speedup = 0.0
+    
+    # Combined score: equal weighting of load and run speedup
+    combined_score = 0.5 * load_speedup + 0.5 * run_speedup
+    
+    # Store all metrics
+    metrics["load_speedup"] = float(load_speedup)
+    metrics["run_speedup"] = float(run_speedup)
+    metrics["combined_score"] = float(combined_score)
+    #metrics["percent_speedup_run_throughput"] = float(run_speedup)  # Keep for compatibility
 
     return EvaluationResult(metrics=metrics, artifacts=artifacts)
 

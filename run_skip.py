@@ -8,13 +8,17 @@ async def main() -> None:
     # Ensure we have an API key in the environment
     if not os.environ.get('OPENAI_API_KEY'):
         raise RuntimeError('OPENAI_API_KEY is not set in the environment')
+    
+    # Set dataset directory for evaluator
+    base_dir = '/Users/girigiri_yomi/Udel_Proj/bskip_artifact'
+    os.environ['BSKIP_DATASET_DIR'] = os.path.join(base_dir, 'bskiplist/data/uniform')
 
     # Configure OpenEvolve for the bskiplist C++ optimization task
     config = Config(
-        max_iterations=20,
+        max_iterations=30,
         checkpoint_interval=2,
         diff_based_evolution=True,
-        max_code_length=200000,
+        max_code_length=300000,
         llm=LLMConfig(
             api_base='https://api.openai.com/v1',
             api_key=os.environ.get('OPENAI_API_KEY'),
@@ -29,53 +33,59 @@ async def main() -> None:
 
         prompt=PromptConfig(
             system_message=("""
-                You are evolving the insert() function in the B-skiplist (bskip.h lines 869-1679) to maximize YCSB throughput. Focus exclusively on algorithmic improvements to the insert operation. Do NOT change public function signatures, class/struct names, or headers included by ycsb.cpp. The binary must compile with the provided Makefile and produce correct map semantics.
+                You are evolving the entire B-skiplist data structure (bskip.h) to maximize YCSB throughput through revolutionary algorithmic innovations. You have complete freedom to redesign the core algorithms and data organization. Do NOT change public function signatures, class/struct names, or headers included by ycsb.cpp. The binary must compile with the provided Makefile and produce correct map semantics.
 
                 Primary objective:
-                - Maximize median run throughput (ops/us) reported by ycsb by optimizing the insert() function specifically.
+                - Maximize combined throughput (load + run operations) reported by ycsb through fundamental algorithmic breakthroughs across the entire data structure.
 
                 Constraints and correctness:
-                - Preserve exact semantics of insert(key,value): successful insertion returns true, duplicate keys update values (for maps), maintain sorted order.
-                - Keep thread-safety guarantees: no data races, deadlocks, or undefined behavior under concurrent access.
-                - Maintain structural invariants: proper skip list levels, correct node linking, balanced promotion probabilities.
+                - Preserve exact semantics of all public operations: insert(key,value), value(key), map_range(start,end,fn), map_range_length(start,len,fn).
+                - Maintain thread-safety guarantees: no data races, deadlocks, or undefined behavior under concurrent access.
+                - Preserve structural correctness: sorted order, range query accuracy, no lost or duplicate keys.
                 - Do not introduce external dependencies; rely on C++20 and available intrinsics only.
 
-                Focus areas for insert() optimization (lines 869-1679):
-                1. **Node splitting strategy** (lines 1293-1487): Improve split point selection, implement "split-with-spare" to reduce cascade splits, adapt split thresholds based on access patterns.
-                2. **Promotion and level assignment** (lines 897-898, 948-965): Optimize coin flipping logic, consider adaptive promotion probabilities based on current structure density.
-                3. **Lock management** (lines 975-1046, 1064-1126): Implement lock elision for low-contention scenarios, optimize hand-over-hand locking patterns, reduce lock scope where safe.
-                4. **Memory allocation patterns** (lines 909-941): Consider micro-batching node allocations, pre-allocation strategies, or memory pool optimizations.
-                5. **Search path optimization** (lines 1051-1133): Improve horizontal traversal efficiency, reduce pointer chasing, add prefetching hints.
+                Scope for algorithmic revolution (entire file is open for innovation):
+                - **Data structure organization**: Reimagine how keys, values, and metadata are stored and accessed
+                - **Concurrency paradigms**: Invent new approaches to thread coordination and lock-free algorithms  
+                - **Memory management**: Design novel allocation patterns, caching strategies, and data locality optimizations
+                - **Search and traversal algorithms**: Create breakthrough approaches to navigation and path optimization
+                - **Node management**: Revolutionize splitting, merging, promotion, and structural maintenance
+                - **Adaptive behaviors**: Develop algorithms that learn and adapt to workload characteristics
 
-                Algorithmic ideas to explore:
-                - Biased split policy: split nodes to preserve cache-hot prefixes and minimize future splits under burst insertions
-                - Adaptive thresholds: adjust MAX_KEYS utilization based on observed access patterns or contention levels  
-                - Lock-free fast paths: use optimistic techniques for common cases (e.g., insert into non-full leaf with no contention)
-                - Batched operations: accumulate multiple inserts per thread before applying structural changes
-                - Smart promotion: bias coin flips based on current structure imbalance or hotspot detection
+                Your mission is to discover completely novel algorithmic paradigms that fundamentally transform how concurrent data structures operate. Think beyond incremental improvements and explore revolutionary concepts that could redefine the field.
 
-                Keep changes cohesive and well-localized within the insert() function. Maintain readable, well-structured C++ with clear invariants and debug assertions.
+                Core research questions to explore:
+                - What if the fundamental assumptions about skiplist organization are wrong?
+                - How can machine learning or adaptive principles be embedded directly into the data structure?
+                - What novel concurrency models could eliminate traditional bottlenecks?
+                - How might the algorithm predict and preemptively optimize for future operations?
+                - What unconventional data layouts or access patterns could yield exponential improvements?
+                - How can the structure dynamically reorganize itself based on observed patterns?
+
+                Invent new algorithms, don't optimize existing ones. Your goal is to make algorithmic contributions that advance computer science. Be bold, creative, and revolutionary in your approach.
+
+                Maintain readable, well-structured C++ with clear invariants and comprehensive error checking. Document your innovations clearly.
             """),
         ),
 
         database=DatabaseConfig(
-            db_path='./examples/bskiplist/openevolve_output',
-            population_size=50,
-            archive_size=20,
-            num_islands=3,
+            db_path=os.path.join(base_dir, 'bskiplist/openevolve_output_fullfile'),
+            population_size=75,
+            archive_size=30,
+            num_islands=4,
             elite_selection_ratio=0.2,
-            exploitation_ratio=0.7,
+            exploitation_ratio=0.6,
         ),
         evaluator=EvaluatorConfig(
-            timeout=300,
+            timeout=600,
             cascade_evaluation=False,
-            parallel_evaluations=2,
+            parallel_evaluations=1,
         ),
     )
 
     openevolve = OpenEvolve(
-        initial_program_path='./bskiplist/bskip.h',
-        evaluation_file='./bskiplist/evaluator.py',
+        initial_program_path=os.path.join(base_dir, 'bskiplist/bskip.h'),
+        evaluation_file=os.path.join(base_dir, 'bskiplist/evaluator.py'),
         config=config,
     )
 

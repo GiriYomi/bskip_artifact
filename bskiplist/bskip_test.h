@@ -845,8 +845,6 @@ private:
                     int level, traits::key_type max);
 };
 
-// EVOLVE-BLOCK-START
-
 template <typename traits>
 uint32_t BSkip<traits>::flip_coins(K k)
 {
@@ -868,7 +866,7 @@ uint32_t BSkip<traits>::flip_coins(K k)
     return result;
 }
 
-
+// EVOLVE-BLOCK-START
 
 template <typename traits>
 #if ENABLE_TRACE_TIMER
@@ -1061,6 +1059,12 @@ bool BSkip<traits>::insert(traits::element_type k)
             tbassert(key >= curr_node->get_header(),
                      "key = %lu, curr node header = %lu, next node header = %lu\n", k,
                      curr_node->get_header(), curr_node->next->get_header());
+
+#if defined(__GNUC__)
+            // Prefetch the next hops to reduce traversal/locking latency
+            __builtin_prefetch(curr_node->next, 0, 1);
+            if (curr_node->next) __builtin_prefetch(curr_node->next->next, 0, 1);
+#endif
 
             // grab next step in the search
             if constexpr (traits::concurrent)
@@ -1331,13 +1335,29 @@ bool BSkip<traits>::insert(traits::element_type k)
                     curr_node->next = new_node;
                     new_node->level = level;
 
-                    // do the split
-                    int half_keys = curr_node->num_elts / 2;
+                    // do an adaptive split with spare headroom to reduce immediate re-splits
+                    uint32_t n = curr_node->num_elts;
+                    uint32_t insert_pos = rank + 1;
+                    uint32_t quarter = n >> 2;
+                    uint32_t eighth = std::max<uint32_t>(1, n >> 3);
+                    uint32_t split_point;
+                    if (insert_pos >= (n - quarter)) {
+                        // inserting near tail: leave spare on right node
+                        split_point = (n > eighth) ? (n - eighth) : (n - 1);
+                    } else if (insert_pos <= quarter) {
+                        // inserting near head: leave spare on left node
+                        split_point = (eighth < n) ? eighth : 1u;
+                    } else {
+                        // middle inserts: split in half
+                        split_point = n >> 1;
+                    }
+                    if (split_point == 0) split_point = 1;
+                    if (split_point >= n) split_point = n - 1;
 
                     // move second half of keys into new node
                     // returns the number of elements that were moved
                     // updates the number of elts in each node
-                    uint32_t elts_moved = curr_node->split_keys(new_node, half_keys, 0);
+                    uint32_t elts_moved = curr_node->split_keys(new_node, split_point, 0);
                     curr_node->next_header = new_node->get_header();
 
                     // move children if necessary
@@ -1345,7 +1365,7 @@ bool BSkip<traits>::insert(traits::element_type k)
                     {
                         ((BSkipNodeInternal<traits> *)curr_node)
                             ->move_children(((BSkipNodeInternal<traits> *)new_node),
-                                            half_keys, elts_moved, 0);
+                                            split_point, elts_moved, 0);
                     }
 
 #if DEBUG_PRINT
@@ -1679,8 +1699,6 @@ bool BSkip<traits>::insert(traits::element_type k)
     }
     return true;
 }
-
-
 
 template <typename traits>
 BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
@@ -2526,6 +2544,7 @@ void BSkip<traits>::map_range_length(traits::key_type start, uint64_t length, F 
         ((BSkipNodeLeaf<traits> *)(current))->mutex_.read_unlock();
     }
 }
+// EVOLVE-BLOCK-END
 
 // true if found
 template <typename traits>
@@ -2855,5 +2874,3 @@ void BSkip<traits>::validate_structure()
 }
 
 #endif
-
-// EVOLVE-BLOCK-END
