@@ -250,6 +250,9 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 
 	std::vector<double> load_tpts;
 	std::vector<double> run_tpts;
+	
+	// Counter for checksum of value() function returns
+	std::atomic<uint64_t> value_checksum{0};
 
 	int constexpr p = node_size / (sizeof(Key) + sizeof(TID));
 	float constexpr p_scale = p_scale_int / 100.0f;
@@ -357,7 +360,10 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 				if (ops[i] == OP_INSERT) {
 					concurrent_map.insert({keys[i], keys[i]});
 				} else if (ops[i] == OP_READ) {
-					concurrent_map.value(keys[i]);
+					auto result = concurrent_map.value(keys[i]);
+					// Add to checksum: result is a tuple, add the first element
+					// The official group said it returns 1 or null, so we add the value
+					value_checksum.fetch_add(std::get<0>(result), std::memory_order_relaxed);
 				} else if (ops[i] == OP_SCAN) {
 					uint64_t sum = 0;
 					concurrent_map.map_range_length(
@@ -396,6 +402,10 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 			concurrent_map.get_size_stats();
 #endif
 		}
+		
+		// Print and reset checksum after each complete iteration (load + run)
+		printf("\tValue checksum: %llu\n", value_checksum.load());
+		value_checksum.store(0);
 	}
 #if LATENCY
 	load_latencies.print_percentiles();

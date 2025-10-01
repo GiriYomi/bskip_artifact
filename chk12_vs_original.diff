@@ -1,0 +1,365 @@
+--- bskiplist/bskip.h	2025-09-29 15:32:32
++++ bskiplist/best_insert_only/chk12/best_program.h	2025-09-29 15:55:14
+@@ -1,11 +1,26 @@
+ /*
+  * ============================================================================
+  *
+- *       Filename:  bskip.h
++ *       Filename:  bskip.h (CHECKPOINT 12 EVOLVED VERSION)
+  *
+- *         Author:  Helen Xu, hjxu@lbl.gov
++ *         Author:  Helen Xu, hjxu@lbl.gov (Original)
++ *                  OpenEvolve AI System (Insert Function Optimizations)
+  *   Organization:  Lawrence Berkeley Laboratory
+  *
++ *   EVOLUTION SUMMARY (Checkpoint 12):
++ *   - 13.53% combined performance improvement over original
++ *   - 14.40% load throughput improvement  
++ *   - 12.66% run throughput improvement
++ *   - Generation 2, Iteration 7 (Program ID: 36354c3e)
++ *   - Focus: Insert function algorithmic optimizations
++ *
++ *   KEY ALGORITHMIC INNOVATIONS:
++ *   1. Thread-local path hinting for sequential insertions
++ *   2. Adaptive split-with-spare capacity (1/16 spare = 6.25%)
++ *   3. Multi-level node caching
++ *   4. Strategic prefetching during traversal
++ *   5. Optimized lock management
++ *
+  * ============================================================================
+  */
+ 
+\ No newline at end of file
+@@ -845,8 +860,6 @@
+                     int level, traits::key_type max);
+ };
+ 
+-// EVOLVE-BLOCK-START
+-
+ template <typename traits>
+ uint32_t BSkip<traits>::flip_coins(K k)
+ {
+\ No newline at end of file
+@@ -868,8 +881,8 @@
+     return result;
+ }
+ 
++// EVOLVE-BLOCK-START
+ 
+-
+ template <typename traits>
+ #if ENABLE_TRACE_TIMER
+ uint64_t BSkip<traits>::insert(traits::element_type k)
+\ No newline at end of file
+@@ -950,7 +963,15 @@
+            level_to_promote);
+ #endif
+ 
+-    auto curr_node = headers[MAX_HEIGHT - 1];
++    BSkipNode<traits> *curr_node;
++    // Path-hinting: reuse last node visited at each level if it still spans this key
++    static thread_local BSkipNode<traits>* level_hint[MAX_HEIGHT] = {nullptr};
++    BSkipNode<traits>* start_hint = level_hint[MAX_HEIGHT - 1];
++    if (start_hint && key >= start_hint->get_header() && key < start_hint->next_header) {
++        curr_node = start_hint;
++    } else {
++        curr_node = headers[MAX_HEIGHT - 1];
++    }
+ #if DEBUG_PRINT
+     printf("printing header and next keys\n");
+     ((BSkipNodeInternal<traits> *)(curr_node))->print_keys();
+\ No newline at end of file
+@@ -1062,6 +1083,9 @@
+                      "key = %lu, curr node header = %lu, next node header = %lu\n", k,
+                      curr_node->get_header(), curr_node->next->get_header());
+ 
++#if defined(__GNUG__)
++            if (curr_node->next && curr_node->next->next) { __builtin_prefetch(curr_node->next->next, 0, 1); }
++#endif
+             // grab next step in the search
+             if constexpr (traits::concurrent)
+             {
+\ No newline at end of file
+@@ -1133,65 +1157,33 @@
+                  k, level_to_promote, level, prev_node->get_header(),
+                  curr_node->get_header());
+ 
++        // cache the node we ended up at for this level to speed up future inserts
++        level_hint[level] = curr_node;
++
+         // now we are at the correct node - look for the key
+         auto [rank, found_key] = curr_node->find_key_and_check(key);
+ 
+         // if the key was found
+         if (found_key)
+         {
+-            // release your lock and do nothing else in the key-only mode
+-            if constexpr (traits::concurrent)
+-            {
+-                // lock_timer.start();
+-                if (level > 0)
+-                {
+-                    if (level_to_promote < level)
+-                    {
+-                        ((BSkipNodeInternal<traits> *)(curr_node))
+-                            ->mutex_.read_unlock(cpuid);
+-                    }
+-                    else
+-                    {
+-                        ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.write_unlock();
+-                    }
+-                }
+-                else
+-                {
+-                    ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
+-                }
+-                // lock_timer.stop();
+-            }
+-
+-            // check if map or set
++            // map semantics: update value if present
+             if constexpr (!traits::binary)
+             {
+                 if (level == 0)
+                 {
+-                    if constexpr (traits::concurrent)
+-                    {
+-                        ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_lock();
+-                        #if STATS
+-                        write_lock_counter++;
+-                        #endif
+-                    }
+-                    // change leaf value
++                    // We already hold the write lock for the leaf at loop entry; update in place.
+                     ((BSkipNodeLeaf<traits> *)curr_node)->blind_write(k, rank);
+                     if constexpr (traits::concurrent)
+                     {
+                         ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
+                     }
++                    return true;
+                 }
+                 else
+                 {
+-                    // curr_node is internal, need to traverse down to the leaf
+-                    if constexpr (traits::concurrent)
+-                    {
+-                   	#if STATS
+-                    	read_lock_counter++;
+-                    #endif
+-                        ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_lock(cpuid);
+-                    }
++                    // Traverse down to the leaf with hand-over-hand locking without an extra unlock/relock.
+                     bool flag = true;
++                    bool held_write = (level_to_promote >= level);
+                     while (curr_node->level > 1)
+                     {
+                         prev_node = curr_node;
+\ No newline at end of file
+@@ -1206,19 +1198,24 @@
+                         }
+                         if constexpr (traits::concurrent)
+                         {
+-   	                   	#if STATS
+-                        	read_lock_counter++;
++                        #if STATS
++                            read_lock_counter++;
+                         #endif
+-                            // lock curr
+                             ((BSkipNodeInternal<traits> *)curr_node)->mutex_.read_lock(cpuid);
+-                            // unlock prev
+-                            ((BSkipNodeInternal<traits> *)prev_node)->mutex_.read_unlock(cpuid);
++                            if (held_write)
++                            {
++                                ((BSkipNodeInternal<traits> *)prev_node)->mutex_.write_unlock();
++                                held_write = false;
++                            }
++                            else
++                            {
++                                ((BSkipNodeInternal<traits> *)prev_node)->mutex_.read_unlock(cpuid);
++                            }
+                         }
+                     }
+ 
+-                    // now level = 1, curr_node is internal and locked
++                    // now level = 1, curr_node is internal and locked (read)
+                     assert(curr_node->level == 1);
+-
+                     prev_node = curr_node;
+ 
+                     if (flag)
+\ No newline at end of file
+@@ -1232,16 +1229,14 @@
+ 
+                     if constexpr (traits::concurrent)
+                     {
+-                        // lock curr
++                        // upgrade at the leaf only
+                         ((BSkipNodeLeaf<traits> *)curr_node)->mutex_.write_lock();
+                         #if STATS
+                         write_lock_counter++;
+                         #endif
+-                        // unlock prev
+                         ((BSkipNodeInternal<traits> *)prev_node)->mutex_.read_unlock(cpuid);
+                     }
+ 
+-                    // change leaf value
+                     assert(curr_node->level == 0);
+                     ((BSkipNodeLeaf<traits> *)curr_node)->blind_write(k, 0);
+ 
+\ No newline at end of file
+@@ -1249,9 +1244,29 @@
+                     {
+                         ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
+                     }
++                    return true;
+                 }
+             }
+ 
++            // Set semantics: nothing to update beyond presence. Release current lock and return.
++            if constexpr (traits::concurrent)
++            {
++                if (level > 0)
++                {
++                    if (level_to_promote < level)
++                    {
++                        ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_unlock(cpuid);
++                    }
++                    else
++                    {
++                        ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.write_unlock();
++                    }
++                }
++                else
++                {
++                    ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
++                }
++            }
+             return true;
+         }
+         else
+\ No newline at end of file
+@@ -1282,8 +1297,13 @@
+                     // lock_timer.stop();
+                 }
+ 
+-                curr_node =
++                level_hint[level] = curr_node;
++                auto child =
+                     ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
++#if defined(__GNUG__)
++                if (child) { __builtin_prefetch(child->next, 0, 1); }
++#endif
++                curr_node = child;
+ 
+                 assert(curr_node != NULL);
+                 continue;
+\ No newline at end of file
+@@ -1331,8 +1351,27 @@
+                     curr_node->next = new_node;
+                     new_node->level = level;
+ 
+-                    // do the split
+-                    int half_keys = curr_node->num_elts / 2;
++                    // do the split with spare capacity near the insertion side
++                    uint32_t N = curr_node->num_elts;
++                    uint32_t spare = std::max<uint32_t>(1, (uint32_t)(traits::MAX_KEYS >> 4)); // 1/16 of a node
++                    uint32_t min_s = std::min<uint32_t>(N - 1, std::max<uint32_t>(1, spare));
++                    uint32_t max_s = std::max<uint32_t>(1U, N - spare);
++                    uint32_t target = rank + 1;
++                    uint32_t half_keys;
++                    if (target <= (N >> 1))
++                    {
++                        uint32_t s = target + spare;
++                        if (s > max_s) s = max_s;
++                        if (s < min_s) s = min_s;
++                        half_keys = s;
++                    }
++                    else
++                    {
++                        uint32_t s = (target > spare ? target - spare : 1U);
++                        if (s < min_s) s = min_s;
++                        if (s > max_s) s = max_s;
++                        half_keys = s;
++                    }
+ 
+                     // move second half of keys into new node
+                     // returns the number of elements that were moved
+\ No newline at end of file
+@@ -1411,7 +1450,12 @@
+ #endif
+                                 // lock_timer.stop();
+                             }
+-                            curr_node = curr_node_cast->get_child_at_rank(rank);
++                            level_hint[level] = curr_node_cast;
++                            auto child = curr_node_cast->get_child_at_rank(rank);
++#if defined(__GNUG__)
++                            if (child) { __builtin_prefetch(child->next, 0, 1); }
++#endif
++                            curr_node = child;
+                         }
+                     }
+                     else
+\ No newline at end of file
+@@ -1475,7 +1519,12 @@
+                             }
+ 
+                             // drop down to next level
+-                            curr_node = new_node_cast->get_child_at_rank(rank_to_insert);
++                            level_hint[level] = new_node_cast;
++                            auto child = new_node_cast->get_child_at_rank(rank_to_insert);
++#if defined(__GNUG__)
++                            if (child) { __builtin_prefetch(child->next, 0, 1); }
++#endif
++                            curr_node = child;
+ 
+                             assert(curr_node);
+                             assert(curr_node->get_header() ==
+\ No newline at end of file
+@@ -1535,7 +1584,12 @@
+                         curr_node->num_elts++;
+                         tbassert(curr_node->num_elts <= traits::MAX_KEYS, "num elts %lu, max keys %lu\n", curr_node->num_elts, traits::MAX_KEYS);
+                         // drop down
+-                        curr_node = curr_node_cast->get_child_at_rank(rank);
++                        level_hint[level] = curr_node_cast;
++                        auto child = curr_node_cast->get_child_at_rank(rank);
++#if defined(__GNUG__)
++                        if (child) { __builtin_prefetch(child->next, 0, 1); }
++#endif
++                        curr_node = child;
+ 
+ #if DEBUG_PRINT
+                         printf("\tmake space at rank %u on level %d, node head %lu\n",
+\ No newline at end of file
+@@ -1652,7 +1706,12 @@
+                     }
+ 
+                     // drop down one level
+-                    curr_node = curr_node_cast->get_child_at_rank(rank);
++                    level_hint[level] = curr_node_cast;
++                    auto child = curr_node_cast->get_child_at_rank(rank);
++#if defined(__GNUG__)
++                    if (child) { __builtin_prefetch(child->next, 0, 1); }
++#endif
++                    curr_node = child;
+                     assert(curr_node);
+                 }
+             }
+\ No newline at end of file
+@@ -1680,8 +1739,8 @@
+     return true;
+ }
+ 
++// EVOLVE-BLOCK-END
+ 
+-
+ template <typename traits>
+ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
+ {
+\ No newline at end of file
+@@ -2855,5 +2914,3 @@
+ }
+ 
+ #endif
+-
+-// EVOLVE-BLOCK-END
+\ No newline at end of file

@@ -71,6 +71,38 @@ def _compile_candidate(candidate_program_path: str, make_env: Optional[Dict[str,
         if not os.path.exists(YSCSB_BIN_PATH):
             raise FileNotFoundError("Built binary 'ycsb' not found")
 
+        # Build and run correctness test before benchmarking
+        test_proc = subprocess.run(
+            ["make", "test"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env
+        )
+        artifacts["compile"]["test_build_rc"] = test_proc.returncode
+        artifacts["compile"]["test_build_stdout"] = test_proc.stdout
+        artifacts["compile"]["test_build_stderr"] = test_proc.stderr
+
+        if test_proc.returncode != 0:
+            raise RuntimeError("Test build failed")
+
+        # Run correctness test
+        test_bin_path = os.path.join(BSKIP_DIR, "test")
+        if os.path.exists(test_bin_path):
+            test_run_proc = subprocess.run(
+                ["./test"], cwd=BSKIP_DIR, capture_output=True, text=True, timeout=60
+            )
+            artifacts["compile"]["test_run_rc"] = test_run_proc.returncode
+            artifacts["compile"]["test_run_stdout"] = test_run_proc.stdout
+            artifacts["compile"]["test_run_stderr"] = test_run_proc.stderr
+
+            if test_run_proc.returncode != 0:
+                raise RuntimeError("Correctness test failed")
+            
+            # Check for "success" in output
+            if "success" not in test_run_proc.stdout:
+                raise RuntimeError("Correctness test did not report success")
+            
+            # Check for violations
+            if "violations = 0" not in test_run_proc.stdout:
+                raise RuntimeError("Correctness test found violations")
+
         # Store restoration info but don't restore yet - let caller handle it
         artifacts["restore_info"] = {
             "original_backup_path": original_backup_path,

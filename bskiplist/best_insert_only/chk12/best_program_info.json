@@ -1,0 +1,22 @@
+{
+  "id": "36354c3e-a814-456d-a68c-59e48e5a4b8e",
+  "generation": 2,
+  "iteration": 7,
+  "current_iteration": 12,
+  "metrics": {
+    "baseline_median_load_ops_per_us": 627.517916,
+    "baseline_median_run_ops_per_us": 169.803792,
+    "baseline_avg_run_ops_per_us": 166.35408688888887,
+    "baseline_runs_successfully": 1.0,
+    "candidate_median_load_ops_per_us": 717.85963,
+    "candidate_median_run_ops_per_us": 191.299324,
+    "candidate_avg_run_ops_per_us": 188.94339433333337,
+    "candidate_runs_successfully": 1.0,
+    "load_speedup": 14.396674851272298,
+    "run_speedup": 12.659041206806517,
+    "combined_score": 13.527858029039407
+  },
+  "language": "python",
+  "timestamp": 1759172112.3784041,
+  "saved_at": 1759172637.1939268
+}
