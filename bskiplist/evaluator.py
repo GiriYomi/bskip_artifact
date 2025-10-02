@@ -270,11 +270,11 @@ def evaluate(program_path: str) -> EvaluationResult:
     artifacts: Dict[str, Any] = {}
     metrics: Dict[str, Any] = {}
 
-    dataset_dir = os.environ.get("BSKIP_DATASET_DIR", "/mydata/skip_data/uniform/")
-    workload = os.environ.get("BSKIP_WORKLOAD", "a")
-    threads = int(os.environ.get("BSKIP_THREADS", "32"))
-    output_file = os.environ.get("BSKIP_OUTPUT", os.path.join("results", "tmp.txt"))
-    enable_latency = os.environ.get("BSKIP_LATENCY", "0") == "1"
+    dataset_dir = "/mydata/skip_data/uniform/"
+    workload = "a"
+    threads = "32"
+    output_file = "out.txt"
+    enable_latency = "0"
 
     if not dataset_dir:
         artifacts["error"] = "BSKIP_DATASET_DIR not set. Cannot run ycsb without dataset."

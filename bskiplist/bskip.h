@@ -9,6 +9,8 @@
  * ============================================================================
  */
 
+// EVOLVE-BLOCK-START
+
 #ifndef _BSKIP_H_
 #define _BSKIP_H_
 
@@ -2839,3 +2841,5 @@ void BSkip<traits>::validate_structure()
 }
 
 #endif
+
+// EVOLVE-BLOCK-END
