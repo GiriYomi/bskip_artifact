@@ -318,7 +318,8 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 						if (ops[index] == OP_INSERT) {
 							concurrent_map.insert({keys[index], keys[index]});
 						} else if (ops[index] == OP_READ) {
-							uint64_t value = concurrent_map.value(keys[index]);
+							auto value_tuple = concurrent_map.value(keys[index]);
+							uint64_t value = std::get<0>(value_tuple);
 							checksum += value;
 						} else if (ops[index] == OP_SCAN) {
 							uint64_t sum = 0;
@@ -358,7 +359,8 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 				if (ops[i] == OP_INSERT) {
 					concurrent_map.insert({keys[i], keys[i]});
 				} else if (ops[i] == OP_READ) {
-					uint64_t value = concurrent_map.value(keys[i]);
+					auto value_tuple = concurrent_map.value(keys[i]);
+					uint64_t value = std::get<0>(value_tuple);
 					checksum += value;
 				} else if (ops[i] == OP_SCAN) {
 					uint64_t sum = 0;
