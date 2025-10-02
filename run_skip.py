@@ -10,8 +10,11 @@ async def main() -> None:
         raise RuntimeError('OPENAI_API_KEY is not set in the environment')
     
     # Set dataset directory for evaluator
-    base_dir = '/home/yomi/0Projects/bskip_artifact'
-    os.environ['BSKIP_DATASET_DIR'] = os.path.join(base_dir, 'data/unif_ycsb/uniform')
+    #base_dir = '/home/yomi/0Projects/bskip_artifact'
+    #os.environ['BSKIP_DATASET_DIR'] = os.path.join(base_dir, 'data/unif_ycsb/uniform')
+
+    base_dir = '/mydata/bskip_artifact'
+    os.environ['BSKIP_DATASET_DIR'] = os.path.join(base_dir, 'mydata/skip_data/uniform')
 
     # Configure OpenEvolve for the bskiplist C++ optimization task
     config = Config(
