@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 from typing import Any, Dict, Optional
 import fcntl
+import time
 
 from openevolve.evaluation_result import EvaluationResult
 
@@ -74,6 +75,7 @@ def _restore_original(restore_info: Dict[str, Any]) -> None:
 def _run_benchmark(dataset_dir: str, workload: str, threads: int, output_file: str) -> Dict[str, Any]:
     """Run benchmark and return results"""
     artifacts: Dict[str, Any] = {"run": {}}
+    TIMEOUT_SECONDS = 580
     
     if not os.path.exists(YSCSB_BIN_PATH):
         artifacts["run"]["rc"] = 1
@@ -89,9 +91,28 @@ def _run_benchmark(dataset_dir: str, workload: str, threads: int, output_file: s
     
     stdout_lines = []
     stderr_lines = []
+    start_time = time.time()
     
     # Stream output to console in real-time
     while True:
+        # Check timeout first
+        if time.time() - start_time > TIMEOUT_SECONDS:
+            print(f"[WARNING] Benchmark timed out after {TIMEOUT_SECONDS}s. Terminating...")
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=4)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            except Exception:
+                pass
+
+            artifacts["run"]["rc"] = 124
+            artifacts["run"]["stdout"] = "\n".join(stdout_lines)
+            artifacts["run"]["stderr"] = "timeout after {TIMEOUT_SECONDS}s"
+            artifacts["run"]["cmd"] = " ".join(cmd)
+            return artifacts
+
         output = proc.stdout.readline()
         if output == '' and proc.poll() is not None:
             break
