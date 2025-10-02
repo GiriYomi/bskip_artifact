@@ -13,6 +13,7 @@
 #include "cxxopts.hpp"
 #include "timers.hpp"
 #include <ParallelTools/parallel.h>
+#include <atomic>
 
 using namespace std;
 
@@ -264,7 +265,7 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 
 	for (int k = 0; k < 6; k++) {
 		BSkip<parallel_traits> concurrent_map;
-		uint64_t checksum = 0; // Counter for checksum of returned values
+		std::atomic<uint64_t> checksum{0}; // Counter for checksum of returned values
 		{
 			auto starttime = get_usecs();
 			
@@ -321,7 +322,7 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 							// add checksum
 							auto value_tuple = concurrent_map.value(keys[index]);
 							uint64_t value = std::get<0>(value_tuple);
-							checksum += value;
+							checksum.fetch_add(value, std::memory_order_relaxed);
 						} else if (ops[index] == OP_SCAN) {
 							uint64_t sum = 0;
 							concurrent_map.map_range_length(
@@ -363,7 +364,7 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 					// add checksum
 					auto value_tuple = concurrent_map.value(keys[i]);
 					uint64_t value = std::get<0>(value_tuple);
-					checksum += value;
+					checksum.fetch_add(value, std::memory_order_relaxed);
 				} else if (ops[i] == OP_SCAN) {
 					uint64_t sum = 0;
 					concurrent_map.map_range_length(
@@ -399,7 +400,7 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 				   (RUN_SIZE * 1.0) / duration.count());
 			
 			// Print checksum for this run
-			printf("\tChecksum: %lu\n", checksum);
+			printf("\tChecksum: %lu\n", checksum.load(std::memory_order_relaxed));
 			
 #if STATS
 			concurrent_map.get_size_stats();
