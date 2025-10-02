@@ -16,7 +16,7 @@ async def main(prompt_num: int) -> None:
     #os.environ['BSKIP_DATASET_DIR'] = os.path.join(base_dir, 'data/unif_ycsb/uniform')
 
     base_dir = '/mydata/bskip_artifact'
-    os.environ['BSKIP_DATASET_DIR'] = os.path.join(base_dir, 'mydata/skip_data/uniform')
+    os.environ['BSKIP_DATASET_DIR'] = '/mydata/skip_data/uniform/'
 
     # Select prompt based on parameter
     prompts = {1: prompt1, 2: prompt2, 3: prompt3}

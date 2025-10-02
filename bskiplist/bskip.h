@@ -9,7 +9,7 @@
  * ============================================================================
  */
 
-// EVOLVE-BLOCK-START
+
 
 #ifndef _BSKIP_H_
 #define _BSKIP_H_
@@ -858,6 +858,8 @@ uint32_t BSkip<traits>::flip_coins(K k)
     return result;
 }
 
+// EVOLVE-BLOCK-START
+
 template <typename traits>
 #if ENABLE_TRACE_TIMER
 uint64_t BSkip<traits>::insert(traits::element_type k)
@@ -1667,6 +1669,8 @@ bool BSkip<traits>::insert(traits::element_type k)
     }
     return true;
 }
+
+// EVOLVE-BLOCK-END
 
 template <typename traits>
 BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
@@ -2842,4 +2846,4 @@ void BSkip<traits>::validate_structure()
 
 #endif
 
-// EVOLVE-BLOCK-END
+
