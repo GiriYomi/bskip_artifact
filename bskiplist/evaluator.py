@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 from typing import Any, Dict, Optional
+import fcntl
 
 from openevolve.evaluation_result import EvaluationResult
 
@@ -29,7 +30,6 @@ def _compile_candidate(candidate_program_path: str, make_env: Optional[Dict[str,
     target_path = BSKIP_HEADER_PATH if candidate_is_header else YSCSB_CPP_PATH
     
     # Create process-safe lock file to prevent parallel evaluation conflicts
-    import fcntl
     lock_file_path = os.path.join(BSKIP_DIR, ".evaluation_lock")
     lock_file = None
     try:
@@ -210,9 +210,11 @@ def _parse_throughput(stdout: str, prefix: str = "candidate") -> Dict[str, float
     # "\tMedian Load throughput: %f ,ops/us"
     # "\tMedian Run throughput: %f ,ops/us"
     # "\tRun, throughput: %f ,ops/us"
+    # "\tLoad took %lu us, throughput = %f ops/us"
     median_load_match = re.search(r"Median Load throughput: ([\d\.]+) ,ops/us", stdout)
     median_run_match = re.search(r"Median Run throughput: ([\d\.]+) ,ops/us", stdout)
     run_samples = re.findall(r"Run, throughput: ([\d\.]+) ,ops/us", stdout)
+    load_samples = re.findall(r"Load took \d+ us, throughput = ([\d\.]+) ops/us", stdout)
 
     if median_load_match:
         metrics[f"{prefix}_median_load_ops_per_us"] = float(median_load_match.group(1))
@@ -222,6 +224,12 @@ def _parse_throughput(stdout: str, prefix: str = "candidate") -> Dict[str, float
         try:
             vals = [float(x) for x in run_samples]
             metrics[f"{prefix}_avg_run_ops_per_us"] = sum(vals) / max(len(vals), 1)
+        except Exception:
+            pass
+    if load_samples:
+        try:
+            vals = [float(x) for x in load_samples]
+            metrics[f"{prefix}_avg_load_ops_per_us"] = sum(vals) / max(len(vals), 1)
         except Exception:
             pass
 
@@ -262,9 +270,9 @@ def evaluate(program_path: str) -> EvaluationResult:
     artifacts: Dict[str, Any] = {}
     metrics: Dict[str, Any] = {}
 
-    dataset_dir = os.environ.get("BSKIP_DATASET_DIR", "/Users/girigiri_yomi/Udel_Proj/bskip_artifact/bskiplist/data/uniform")
+    dataset_dir = os.environ.get("BSKIP_DATASET_DIR", "/mydata/skip_data/uniform/")
     workload = os.environ.get("BSKIP_WORKLOAD", "a")
-    threads = int(os.environ.get("BSKIP_THREADS", "16"))
+    threads = int(os.environ.get("BSKIP_THREADS", "32"))
     output_file = os.environ.get("BSKIP_OUTPUT", os.path.join("results", "tmp.txt"))
     enable_latency = os.environ.get("BSKIP_LATENCY", "0") == "1"
 
@@ -287,8 +295,8 @@ def evaluate(program_path: str) -> EvaluationResult:
         print("[baseline Eval Error] Baseline compile failed")
         return EvaluationResult(metrics={"combined_score": 0.0, "baseline_runs_successfully": 0.0, "candidate_runs_successfully": 0.0}, artifacts=artifacts)
 
-    # Run baseline multiple times for stability (3 runs to reduce variance)
-    base_run_art = _run_benchmark(dataset_dir=dataset_dir, workload=workload, threads=threads, output_file=output_file, num_runs=3)
+    # Run baseline once
+    base_run_art = _run_benchmark(dataset_dir=dataset_dir, workload=workload, threads=threads, output_file=output_file, num_runs=1)
     artifacts.update({"baseline_run": base_run_art.get("run", {})})
     if base_run_art.get("run", {}).get("rc", 1) != 0:
         print("[baseline Eval Error] Baseline run failed")
@@ -314,8 +322,8 @@ def evaluate(program_path: str) -> EvaluationResult:
         return EvaluationResult(metrics=metrics, artifacts=artifacts)
 
     try:
-        # Run candidate multiple times for stability (3 runs to reduce variance)
-        cand_run_art = _run_benchmark(dataset_dir=dataset_dir, workload=workload, threads=threads, output_file=output_file, num_runs=3)
+        # Run candidate once
+        cand_run_art = _run_benchmark(dataset_dir=dataset_dir, workload=workload, threads=threads, output_file=output_file, num_runs=1)
         artifacts.update(cand_run_art)
         if cand_run_art.get("run", {}).get("rc", 1) != 0:
             print("[candidate Eval Error] Candidate run failed")
@@ -334,9 +342,9 @@ def evaluate(program_path: str) -> EvaluationResult:
     # Compute percentage speedup for both load and run throughput
     eps = 1e-12
     
-    # Calculate load speedup (median load throughput)
-    base_load_key = "baseline_median_load_ops_per_us"
-    cand_load_key = "candidate_median_load_ops_per_us"
+    # Calculate load speedup (median load throughput, fallback to avg load)
+    base_load_key = "baseline_median_load_ops_per_us" if "baseline_median_load_ops_per_us" in metrics else "baseline_avg_load_ops_per_us"
+    cand_load_key = "candidate_median_load_ops_per_us" if "candidate_median_load_ops_per_us" in metrics else "candidate_avg_load_ops_per_us"
     base_load_val = float(metrics.get(base_load_key, 0.0))
     cand_load_val = float(metrics.get(cand_load_key, 0.0))
     if base_load_val > eps:

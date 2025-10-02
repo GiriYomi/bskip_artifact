@@ -10,20 +10,20 @@ async def main() -> None:
         raise RuntimeError('OPENAI_API_KEY is not set in the environment')
     
     # Set dataset directory for evaluator
-    base_dir = '/Users/girigiri_yomi/Udel_Proj/bskip_artifact'
-    os.environ['BSKIP_DATASET_DIR'] = os.path.join(base_dir, 'bskiplist/data/uniform')
+    base_dir = '/home/yomi/0Projects/bskip_artifact'
+    os.environ['BSKIP_DATASET_DIR'] = os.path.join(base_dir, 'data/unif_ycsb/uniform')
 
     # Configure OpenEvolve for the bskiplist C++ optimization task
     config = Config(
-        max_iterations=30,
+        max_iterations=6,
         checkpoint_interval=2,
         diff_based_evolution=True,
         max_code_length=300000,
         llm=LLMConfig(
             api_base='https://api.openai.com/v1',
             api_key=os.environ.get('OPENAI_API_KEY'),
-            models=[LLMModelConfig(name='gpt-5', weight=1.0)],
-            evaluator_models=[LLMModelConfig(name='gpt-5', weight=1.0)],
+            models=[LLMModelConfig(name='gpt-5-mini', weight=1.0)],
+            evaluator_models=[LLMModelConfig(name='gpt-5-mini', weight=1.0)],
             temperature=0.7,
             max_tokens=20000,
             timeout=360,

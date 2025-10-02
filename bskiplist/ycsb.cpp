@@ -264,6 +264,7 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 
 	for (int k = 0; k < 6; k++) {
 		BSkip<parallel_traits> concurrent_map;
+		uint64_t checksum = 0; // Counter for checksum of returned values
 		{
 			auto starttime = get_usecs();
 			
@@ -317,7 +318,8 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 						if (ops[index] == OP_INSERT) {
 							concurrent_map.insert({keys[index], keys[index]});
 						} else if (ops[index] == OP_READ) {
-							concurrent_map.value(keys[index]);
+							uint64_t value = concurrent_map.value(keys[index]);
+							checksum += value;
 						} else if (ops[index] == OP_SCAN) {
 							uint64_t sum = 0;
 							concurrent_map.map_range_length(
@@ -356,7 +358,8 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 				if (ops[i] == OP_INSERT) {
 					concurrent_map.insert({keys[i], keys[i]});
 				} else if (ops[i] == OP_READ) {
-					concurrent_map.value(keys[i]);
+					uint64_t value = concurrent_map.value(keys[i]);
+					checksum += value;
 				} else if (ops[i] == OP_SCAN) {
 					uint64_t sum = 0;
 					concurrent_map.map_range_length(
@@ -390,6 +393,9 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 
 			printf("\tRun, throughput: %f ,ops/us\n",
 				   (RUN_SIZE * 1.0) / duration.count());
+			
+			// Print checksum for this run
+			printf("\tChecksum: %lu\n", checksum);
 			
 #if STATS
 			concurrent_map.get_size_stats();
