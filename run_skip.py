@@ -58,7 +58,7 @@ async def main(prompt_num: int) -> None:
         ),
 
         database=DatabaseConfig(
-            db_path=os.path.join(base_dir, 'bskiplist/openevolve_output_fullfile'),
+            db_path=os.path.join(base_dir, 'bskiplist/openevolve_output'),
             population_size=75,
             archive_size=30,
             num_islands=4,
