@@ -1,0 +1,7 @@
+basic
+ycsb
+range
+*.csv
+
+/openevolve_output*
+

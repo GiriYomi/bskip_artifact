@@ -15,8 +15,17 @@ async def main(prompt_num: int) -> None:
     #base_dir = '/home/yomi/0Projects/bskip_artifact'
     #os.environ['BSKIP_DATASET_DIR'] = os.path.join(base_dir, 'data/unif_ycsb/uniform')
 
-    base_dir = '/mydata/bskip_artifact'
-    os.environ['BSKIP_DATASET_DIR'] = '/mydata/skip_data/uniform/'
+
+    if os.path.exists('/home/yomi/0Projects/skip_data/uniform/'):
+        # Local environment - use full dataset
+        base_dir = '/home/yomi/0Projects/bskip_artifact'
+        os.environ['BSKIP_DATASET_DIR'] = '/home/yomi/0Projects/skip_data/uniform/'
+        print("Running in LOCAL environment (full dataset)")
+    else:
+        # Cloudlab environment
+        base_dir = '/mydata/bskip_artifact'
+        os.environ['BSKIP_DATASET_DIR'] = '/mydata/skip_data/uniform/'
+        print("Running in CLOUDLAB environment")
 
     # Select prompt based on parameter
     prompts = {1: prompt1, 2: prompt2, 3: prompt3}

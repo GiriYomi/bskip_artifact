@@ -9,8 +9,6 @@
  * ============================================================================
  */
 
-
-
 #ifndef _BSKIP_H_
 #define _BSKIP_H_
 
@@ -341,29 +339,25 @@ public:
 private:
     uint32_t find_index_linear(K k)
     {
-        uint32_t i;
-        assert(BSkipNode<traits>::num_elts > 0);
+        uint32_t n = BSkipNode<traits>::num_elts;
+        assert(n > 0);
 
-        for (i = 0; i < BSkipNode<traits>::num_elts; i++)
+        // Linear scan that returns the largest index i such that key[i] <= k.
+        // Cache the key per-iteration to avoid repeated blind_read_key calls.
+        for (uint32_t i = 0; i < n; ++i)
         {
-            // if (keys[i] < k)
-            if (blind_read_key(i) < k)
-                continue;
-            else if (k == blind_read_key(i))
-            { // (k == keys[i]) {
-                // tbassert(pos - 1 == i, "pos = %u, i = %u\n", pos, i);
-                // return pos - 1;
+            K key = blind_read_key(i);
+            if (key == k) {
                 return i;
             }
-            else
-                break;
+            if (key > k) {
+                // If this is the first element, return 0 (headers guarantee
+                // caller's k >= node header in normal paths).
+                return (i == 0) ? 0 : (i - 1);
+            }
         }
-        return i - 1;
-        /*
-            assert(pos > 0);
-            tbassert(pos - 1 == i - 1, "pos = %u, correct = %u\n", pos, i - 1);
-                        return pos - 1;
-        */
+        // All keys <= k, return last index
+        return n - 1;
     }
 
     // TODO: add binary search
@@ -857,8 +851,6 @@ uint32_t BSkip<traits>::flip_coins(K k)
     assert(result < MAX_HEIGHT);
     return result;
 }
-
-// EVOLVE-BLOCK-START
 
 template <typename traits>
 #if ENABLE_TRACE_TIMER
@@ -1670,8 +1662,6 @@ bool BSkip<traits>::insert(traits::element_type k)
     return true;
 }
 
-// EVOLVE-BLOCK-END
-
 template <typename traits>
 BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
 {
@@ -2247,34 +2237,42 @@ void BSkip<traits>::map_range(traits::key_type min, traits::key_type max, F f) c
     }
 
     // Iterate through all the elements less than max, applying function F along the way
-    while (current->get_key_at_rank(current_key_rank) <= max && current->get_key_at_rank(current_key_rank) != std::numeric_limits<K>::max())
+    // Process elements within a leaf in tight loops and reduce repeated casts/virtuals.
     {
-        f(current->get_key_at_rank(current_key_rank), ((BSkipNodeLeaf<traits> *)(current))->blind_read_val(current_key_rank));
-        current_key_rank += 1;
-        // Check if we have reached the end of current
-        if (current_key_rank == current->num_elts)
-        {
-            auto previous = current;
+        auto *leaf = static_cast<BSkipNodeLeaf<traits> *>(current);
+        while (true) {
+            // fast-path iterate over remaining elements in this leaf
+            uint32_t ne = leaf->num_elts;
+            while (current_key_rank < ne) {
+                K kcur = leaf->blind_read_key(current_key_rank);
+                if (kcur == std::numeric_limits<K>::max() || kcur > max) goto MAP_RANGE_DONE;
+                f(kcur, leaf->blind_read_val(current_key_rank));
+                ++current_key_rank;
+            }
+
+            // move to next leaf
+            auto *previous = leaf;
             if constexpr (traits::concurrent)
             {
-           	#if STATS
-            	read_lock_counter++;
+            #if STATS
+                read_lock_counter++;
             #endif
-                ((BSkipNodeLeaf<traits> *)(current->next))->mutex_.read_lock(cpuid);
+                static_cast<BSkipNodeLeaf<traits> *>(leaf->next)->mutex_.read_lock(cpuid);
             }
-            current = current->next;
+            leaf = static_cast<BSkipNodeLeaf<traits> *>(leaf->next);
+            current = leaf;
             current_key_rank = 0;
             if constexpr (traits::concurrent)
             {
-                ((BSkipNodeLeaf<traits> *)(previous))->mutex_.read_unlock();
+                previous->mutex_.read_unlock();
             }
         }
     }
-
+MAP_RANGE_DONE:
     // Unlock after the query is complete
     if constexpr (traits::concurrent)
     {
-        ((BSkipNodeLeaf<traits> *)(current))->mutex_.read_unlock();
+        static_cast<BSkipNodeLeaf<traits> *>(current)->mutex_.read_unlock();
     }
 }
 
@@ -2453,9 +2451,10 @@ void BSkip<traits>::map_range_length(traits::key_type start, uint64_t length, F 
 	uint32_t num_remaining = length;
 	while (current->get_key_at_rank(current_key_rank) != std::numeric_limits<K>::max() && num_remaining) {
 		int iteration = std::min(current->num_elts - current_key_rank, num_remaining);
-		for (int i=0; i<iteration;i++) {
-			f(current->get_key_at_rank(current_key_rank), ((BSkipNodeLeaf<traits> *)(current))->blind_read_val(current_key_rank));
-			current_key_rank++;
+		for (int i = 0; i < iteration; ++i) {
+			K kcur = current->get_key_at_rank(current_key_rank);
+			f(kcur, ((BSkipNodeLeaf<traits> *)(current))->blind_read_val(current_key_rank));
+			++current_key_rank;
 		}
 		num_remaining -= iteration;
 		if (num_remaining) {
@@ -2845,5 +2844,3 @@ void BSkip<traits>::validate_structure()
 }
 
 #endif
-
-
