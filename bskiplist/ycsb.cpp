@@ -265,7 +265,9 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 
 	for (int k = 0; k < 6; k++) {
 		BSkip<parallel_traits> concurrent_map;
+#if LATENCY
 		std::atomic<uint64_t> checksum{0}; // Counter for checksum of returned values
+#endif
 		{
 			auto starttime = get_usecs();
 			
@@ -361,10 +363,14 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 				if (ops[i] == OP_INSERT) {
 					concurrent_map.insert({keys[i], keys[i]});
 				} else if (ops[i] == OP_READ) {
+#if LATENCY
 					// add checksum
 					auto value_tuple = concurrent_map.value(keys[i]);
 					uint64_t value = std::get<0>(value_tuple);
 					checksum.fetch_add(value, std::memory_order_relaxed);
+#else
+					concurrent_map.value(keys[i]);
+#endif
 				} else if (ops[i] == OP_SCAN) {
 					uint64_t sum = 0;
 					concurrent_map.map_range_length(
@@ -399,8 +405,10 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 			printf("\tRun, throughput: %f ,ops/us\n",
 				   (RUN_SIZE * 1.0) / duration.count());
 			
+#if LATENCY
 			// Print checksum for this run
 			printf("\tChecksum: %lu\n", checksum.load(std::memory_order_relaxed));
+#endif
 			
 #if STATS
 			concurrent_map.get_size_stats();
