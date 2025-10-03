@@ -324,7 +324,7 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 							// add checksum
 							auto value_tuple = concurrent_map.value(keys[index]);
 							uint64_t value = std::get<0>(value_tuple);
-							checksum.fetch_add(value, std::memory_order_relaxed);
+							checksum.fetch_add(1, std::memory_order_relaxed);
 						} else if (ops[index] == OP_SCAN) {
 							uint64_t sum = 0;
 							concurrent_map.map_range_length(
@@ -367,10 +367,7 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 					// add checksum
 					auto value_tuple = concurrent_map.value(keys[i]);
 					uint64_t value = std::get<0>(value_tuple);
-					checksum.fetch_add(value, std::memory_order_relaxed);
-#else
-					concurrent_map.value(keys[i]);
-#endif
+					checksum.fetch_add(1, std::memory_order_relaxed);
 				} else if (ops[i] == OP_SCAN) {
 					uint64_t sum = 0;
 					concurrent_map.map_range_length(
