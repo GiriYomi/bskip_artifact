@@ -3,7 +3,7 @@ import sys
 import asyncio
 from openevolve import OpenEvolve
 from openevolve.config import Config, LLMConfig, LLMModelConfig, DatabaseConfig, EvaluatorConfig, PromptConfig
-from prompt import prompt1, prompt2, prompt3
+from prompt import prompt1, prompt2, prompt3, prompt4
 
 
 async def main(prompt_num: int) -> None:
