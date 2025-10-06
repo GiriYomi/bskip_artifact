@@ -95,8 +95,54 @@ Invent new algorithms, don't optimize existing ones. Your goal is to make algori
 
 Maintain readable, well-structured C++ with clear invariants and comprehensive error checking. Document your innovations clearly."""
 
-prompt4 = """
+prompt4 = """You are evolving the B-skiplist's core insert and find algorithms to achieve breakthrough performance through novel algorithmic innovations. Focus exclusively on the fundamental search and insertion logic within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
 
-"""
+Primary objective:
+- Revolutionize the insert() and find() algorithms to maximize YCSB throughput through fundamental algorithmic breakthroughs in search and insertion strategies.
+
+Core algorithmic challenges to solve:
+
+1. **Search Algorithm Revolution**:
+   - Invent new traversal strategies that minimize comparisons and cache misses
+   - Design adaptive search paths that learn from access patterns
+   - Create novel approaches to level selection and node navigation
+   - Explore predictive search techniques that anticipate likely access patterns
+
+2. **Insertion Algorithm Innovation**:
+   - Redesign promotion strategies beyond simple coin flipping
+   - Invent new node splitting and merging algorithms
+   - Create adaptive insertion patterns that optimize for workload characteristics
+   - Design novel approaches to maintaining structural invariants
+
+3. **Key Research Directions**:
+   - **Adaptive Height Management**: Instead of random promotion, design algorithms that dynamically adjust node heights based on access frequency, key distribution, or workload patterns
+   - **Predictive Path Optimization**: Create search algorithms that use historical access patterns to predict optimal traversal paths
+   - **Intelligent Node Splitting**: Design splitting strategies that consider key distribution, access patterns, and future growth to minimize future search costs
+   - **Cache-Conscious Algorithms**: Invent data layouts and access patterns that maximize cache efficiency and minimize memory bandwidth
+   - **Workload-Aware Adaptation**: Create algorithms that automatically adapt their behavior based on observed operation patterns (insert-heavy vs search-heavy workloads)
+
+4. **Algorithmic Innovation Areas**:
+   - Replace linear/binary search within nodes with novel search algorithms
+   - Design new approaches to level traversal that reduce the number of nodes visited
+   - Invent adaptive promotion strategies that optimize for specific workload characteristics
+   - Create novel node organization schemes that improve search efficiency
+   - Design algorithms that learn and adapt to access patterns over time
+
+Constraints:
+- Preserve exact function signatures: insert(traits::element_type k) and find(traits::key_type k)
+- Maintain thread-safety and correctness guarantees
+- Keep the same public interface and compilation requirements
+- Focus only on algorithmic improvements, not code optimization (caching, early stops, etc.)
+
+Your mission is to discover fundamentally new ways of thinking about search and insertion in skiplist-like structures. Think beyond traditional approaches and explore revolutionary concepts that could redefine how these operations work.
+
+Key questions to explore:
+- What if search paths could be learned and optimized dynamically?
+- How could insertion strategies adapt to minimize future search costs?
+- What novel approaches to node organization could eliminate traditional bottlenecks?
+- How might the algorithm predict and preemptively optimize for likely access patterns?
+- What unconventional traversal strategies could yield exponential improvements?
+
+Invent new algorithms that advance the state of the art in concurrent search structures. Be bold, creative, and revolutionary in your approach to these fundamental operations."""
 
 
