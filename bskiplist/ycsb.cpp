@@ -368,6 +368,9 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 					auto value_tuple = concurrent_map.value(keys[i]);
 					uint64_t value = std::get<0>(value_tuple);
 					checksum.fetch_add(1, std::memory_order_relaxed);
+#else
+					concurrent_map.value(keys[i]);
+#endif
 				} else if (ops[i] == OP_SCAN) {
 					uint64_t sum = 0;
 					concurrent_map.map_range_length(
@@ -427,18 +430,18 @@ void ycsb_load_run_randint(std::string init_file, std::string txn_file,
 
 int main(int argc, char **argv) {
 	if (argc != 5) {
-		std::cout << "Usage: ./ycsb [index type] [ycsb workload type] [key "
-					 "distribution] [access pattern] [number of threads]\n";
-		std::cout << "1. index type: art hot bwtree masstree clht\n";
-		std::cout << "               fastfair levelhash cceh woart\n";
-		std::cout << "2. ycsb workload type: a, b, c, e\n";
-		std::cout << "3. key distribution: randint, string\n";
-		std::cout << "4. access pattern: uniform, zipfian\n";
-		std::cout << "5. number of threads (integer)\n";
+		std::cout << "Usage: ./ycsb [dataset_dir] [workload] [threads] [output_file]\n";
+		std::cout << "1. dataset_dir: directory containing load and transaction files\n";
+		std::cout << "2. workload: a, b, c, d, e, x, y\n";
+		std::cout << "3. threads: number of threads (integer)\n";
+		std::cout << "4. output_file: output file path\n";
 		return 1;
 	}
 
 	string file_dir = argv[1];
+	if (file_dir.back() != '/') {
+		file_dir += "/";
+	}
 
 	string load_file = file_dir;
 	string index_file = file_dir;
@@ -505,20 +508,4 @@ int main(int argc, char **argv) {
 	// ycsb_load_run_randint<1024, 2.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
 	
 	ycsb_load_run_randint<2048, 0.5f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	
-	return 0;
-	ycsb_load_run_randint<2048, 1.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<2048, 2.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	
-	ycsb_load_run_randint<4096, 0.5f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<4096, 1.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<4096, 2.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	
-	return 0;
-	
-	ycsb_load_run_randint<8192, 0.5f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<8192, 1.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-	ycsb_load_run_randint<8192, 2.0f>(load_file, index_file, num_thread, init_keys, keys, ranges_end, ranges, ops, output);
-
-	return 0;
 }

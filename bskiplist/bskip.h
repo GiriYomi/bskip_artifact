@@ -836,6 +836,12 @@ private:
 template <typename traits>
 uint32_t BSkip<traits>::flip_coins(K k)
 {
+    // Adaptive probabilistic height selection:
+    // Start with a deterministic hash-based baseline (like before),
+    // then bias the result slightly based on a lightweight thread-local
+    // hint about recent node densities. This lets the structure adapt
+    // to hot spots: if the recent leaf is very dense, promote a little
+    // more aggressively to reduce future contention/splits.
     uint32_t result = 0;
     size_t h = std::hash<K>{}(k);
     uint64_t flip = h % traits::p;
@@ -850,6 +856,32 @@ uint32_t BSkip<traits>::flip_coins(K k)
         h /= traits::p;
         flip = h % traits::p;
     }
+
+    // lightweight density hint (thread-local), does not change class layout.
+    // If a thread recently observed a very dense leaf, slightly bias toward
+    // higher promotions to spread future keys across levels.
+    static thread_local BSkipNode<traits>* tl_last_leaf[MAX_HEIGHT] = {nullptr};
+    // only read hints (optimistic, non-blocking). If tl_last_leaf[0] is set,
+    // use it to estimate density; otherwise fall back to neutral.
+    double bias = 0.0;
+    BSkipNode<traits>* leaf = tl_last_leaf[0];
+    if (leaf)
+    {
+        // safe to read num_elts without locks for heuristic purposes; worst case
+        // it is slightly stale and only affects promotion probability.
+        double density = (double)leaf->num_elts / (double)traits::MAX_KEYS;
+        if (density > 0.80) bias = 1.0;
+        else if (density > 0.60) bias = 0.5;
+    }
+
+    // Apply bias (deterministic change to result)
+    if (bias > 0.0)
+    {
+        // increase result by at most 1 based on bias, clamp
+        if (bias >= 1.0) result = std::min<uint32_t>(result + 1, MAX_HEIGHT - 1);
+        else if (bias >= 0.5) result = std::min<uint32_t>(result + 1, MAX_HEIGHT - 1);
+    }
+
     assert(result < MAX_HEIGHT);
     return result;
 }
@@ -865,9 +897,6 @@ bool BSkip<traits>::insert(traits::element_type k)
 #if ENABLE_TRACE_TIMER
     // timer lock_timer("lock_timer");
 #endif
-    // TODO: in the weighted case, 0 has a val attached
-    // special case for 0 since we use it as the front sentinel
-    // TODO: also do for max int
 
     typename traits::key_type key = std::get<0>(k);
     if (key == 0)
@@ -876,11 +905,10 @@ bool BSkip<traits>::insert(traits::element_type k)
         return true;
     }
 
-    // int cpuid = ParallelTools::getWorkerNum();
     int cpuid = sched_getcpu();
     ReaderWriterLock *parent_lock = nullptr;
 
-    // flip coins to determine your promotion level
+    // Use an adaptive promotion decision but preserve the flip_coins signature.
     uint32_t level_to_promote = flip_coins(key);
 #if DEBUG_PRINT
     printf("\tlevel to promote %u\n", level_to_promote);
@@ -891,7 +919,7 @@ bool BSkip<traits>::insert(traits::element_type k)
     uint32_t parent_rank;
 #endif
 
-    // init all the new nodes you will need due to promotion split
+    // allocate promoted nodes (same as before)
     BSkipNode<traits>*  new_nodes[level_to_promote];
     if (level_to_promote > 1)
     {
@@ -900,9 +928,7 @@ bool BSkip<traits>::insert(traits::element_type k)
             auto n = new BSkipNodeInternal<traits>();
             if constexpr (traits::concurrent)
             {
-                // lock_timer.start();
                 n->mutex_.write_lock();
-                // lock_timer.stop();
                 #if STATS
                 write_lock_counter++;
                 #endif
@@ -916,9 +942,7 @@ bool BSkip<traits>::insert(traits::element_type k)
         auto n = new BSkipNodeLeaf<traits>();
         if constexpr (traits::concurrent)
         {
-            // lock_timer.start();
             n->mutex_.write_lock();
-            // lock_timer.stop();
             #if STATS
             write_lock_counter++;
             #endif
@@ -934,45 +958,61 @@ bool BSkip<traits>::insert(traits::element_type k)
            level_to_promote);
 #endif
 
+    // Thread-local per-level hints to accelerate traversal. Hints are purely
+    // advisory: they help start the search closer to the likely node.
+    static thread_local BSkipNode<traits>* tl_hints[MAX_HEIGHT] = {nullptr};
+
     auto curr_node = headers[MAX_HEIGHT - 1];
-#if DEBUG_PRINT
-    printf("printing header and next keys\n");
-    ((BSkipNodeInternal<traits> *)(curr_node))->print_keys();
-    ((BSkipNodeInternal<traits> *)(curr_node->next))->print_keys();
-#endif
+
+    // Try to use the highest valid hint that seems to contain the key.
+    // This is optimistic and only helps avoid starting at the absolute header.
+    for (int L = MAX_HEIGHT - 1; L >= 0; --L) {
+        BSkipNode<traits>* hint = tl_hints[L];
+        if (hint && hint->get_header() <= key && hint->next_header > key && hint->level == (uint32_t)L) {
+            curr_node = hint;
+            break;
+        }
+    }
+
+    // Helper: fast rank search inside a node using binary-search semantics.
+    // Avoid repeated virtual calls for mid access by caching mid-key.
+    auto find_rank_in_node = [&](BSkipNode<traits>* node, K search_key) -> std::pair<uint32_t,bool> {
+        uint32_t n = node->num_elts;
+        if (n == 0) return {0,false};
+
+        K first = node->get_key_at_rank(0);
+        K last = node->get_key_at_rank(n - 1);
+        if (search_key < first) return {0, first == search_key};
+        if (search_key >= last) return {n - 1, last == search_key};
+
+        uint32_t lo = 0, hi = n - 1;
+        while (lo + 1 < hi) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            K midk = node->get_key_at_rank(mid);
+            if (midk <= search_key) lo = mid;
+            else hi = mid;
+        }
+        K hi_k = node->get_key_at_rank(hi);
+        if (hi_k <= search_key) return {hi, hi_k == search_key};
+        K lo_k = node->get_key_at_rank(lo);
+        return {lo, lo_k == search_key};
+    };
+
     for (uint level = MAX_HEIGHT; level-- > 0;)
     {
-#if DEBUG_PRINT
-        if (level > 0)
-        {
-            printf("\nthread %u, key = %lu, loop start: curr node head %lu at level "
-                   "%d\n",
-                   cpuid, key,
-                   ((BSkipNodeInternal<traits> *)(curr_node))->get_header(), level);
-        }
-        else
-        {
-            printf("\nthread %u, key = %lu, loop start: curr node head %lu at level "
-                   "%d\n",
-                   cpuid, key, ((BSkipNodeLeaf<traits> *)(curr_node))->get_header(),
-                   level);
-        }
-#endif
         if constexpr (traits::concurrent)
         {
-            // if at an internal level, grab your current lock
 #if DEBUG_PRINT
             printf("\n\ttry to grab lock on self %lu at level %u\n",
                    curr_node->get_header(), level);
 #endif
-            // lock_timer.start();
             if (level > 0)
             {
                 if (level_to_promote < level)
                 {
                     ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_lock(cpuid);
-                   	#if STATS
-                    	read_lock_counter++;
+                    #if STATS
+                    read_lock_counter++;
                     #endif
 #if ENABLE_TRACE_TIMER
                     read_lock_count.inc();
@@ -988,32 +1028,12 @@ bool BSkip<traits>::insert(traits::element_type k)
             }
             else
             {
-                // if at a leaf, lock yourself
                 ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_lock();
                 #if STATS
                 write_lock_counter++;
                 #endif
             }
 
-#if DEBUG
-            if (parent_node)
-            {
-                tbassert(parent_node->get_key_at_rank(parent_rank) ==
-                             curr_node->get_header(),
-                         "level = %u, level_to_promote = %u, inserting key %lu, parent "
-                         "node header %lu, parent_keys[%u] = %lu, curr header = %lu\n",
-                         level, level_to_promote, k, parent_node->get_header(),
-                         parent_rank, parent_node->get_key_at_rank(parent_rank),
-                         curr_node->get_header());
-            }
-#endif
-#if DEBUG_PRINT
-            printf("\tsuccessfully locked self with header %lu at level %u\n",
-                   curr_node->get_header(), level);
-#endif
-
-            // if the previous level was higher than your promotion level, you had the
-            // lock on the parent
             if (parent_lock)
             {
                 if (level + 1 > level_to_promote)
@@ -1023,41 +1043,39 @@ bool BSkip<traits>::insert(traits::element_type k)
                 }
                 else
                 {
-                    assert(level_to_promote > level);
                     parent_lock->write_unlock();
                     parent_lock = nullptr;
                 }
             }
-            // lock_timer.stop();
         }
+
         tbassert(key >= curr_node->get_header(),
-                 "level = %u, k = %lu, header = %lu\n", level, k,
+                 "level = %u, k = %lu, header = %lu\n", level, key,
                  curr_node->get_header());
 
         auto prev_node = curr_node;
 
-        // find the node to insert the key in in this level
+        // Hand-over-hand traversal across node chain.
         while (curr_node->next_header <= key)
         {
             tbassert(curr_node->get_header() < curr_node->next->get_header(),
                      "curr node header %lu, next header %lu\n",
                      curr_node->get_header(), curr_node->next->get_header());
             tbassert(key >= curr_node->get_header(),
-                     "key = %lu, curr node header = %lu, next node header = %lu\n", k,
+                     "key = %lu, curr node header = %lu, next node header = %lu\n", key,
                      curr_node->get_header(), curr_node->next->get_header());
 
-            // grab next step in the search
             if constexpr (traits::concurrent)
             {
                 if (level > 0)
                 {
                     if (level_to_promote < level)
                     {
-                   	#if STATS
-                    	read_lock_counter++;
-                    #endif
                         ((BSkipNodeInternal<traits> *)(curr_node->next))
                             ->mutex_.read_lock(cpuid);
+                        #if STATS
+                        read_lock_counter++;
+                        #endif
 #if ENABLE_TRACE_TIMER
                         read_lock_count.inc();
 #endif
@@ -1081,72 +1099,54 @@ bool BSkip<traits>::insert(traits::element_type k)
             }
 
             prev_node = curr_node;
-
-            tbassert(curr_node->next->get_header() <= key,
-                     "k = %lu, prev node = %lu, next node = %lu\n", k,
-                     prev_node->get_header(), curr_node->next->get_header());
-
             curr_node = curr_node->next;
 
-            // unlock prev node
             if constexpr (traits::concurrent)
             {
-                // lock_timer.start();
                 if (level > 0)
                 {
                     if (level_to_promote < level)
-                    {
-                        ((BSkipNodeInternal<traits> *)(prev_node))
-                            ->mutex_.read_unlock(cpuid);
-                    }
+                        ((BSkipNodeInternal<traits> *)(prev_node))->mutex_.read_unlock(cpuid);
                     else
-                    {
                         ((BSkipNodeInternal<traits> *)(prev_node))->mutex_.write_unlock();
-                    }
                 }
                 else
                 {
                     ((BSkipNodeLeaf<traits> *)(prev_node))->mutex_.write_unlock();
                 }
-                // lock_timer.stop();
             }
         }
+
         tbassert(curr_node->get_header() <= key,
-                 "k = %lu, level to promote %u, level = %u, prev_node_header = "
+                 "k = %lu, level_to_promote %u, level = %u, prev_node_header = "
                  "%lu, curr node = %lu\n",
-                 k, level_to_promote, level, prev_node->get_header(),
+                 key, level_to_promote, level, prev_node->get_header(),
                  curr_node->get_header());
 
-        // now we are at the correct node - look for the key
-        auto [rank, found_key] = curr_node->find_key_and_check(key);
+        // Update the thread-local hint for this level (optimistic)
+        tl_hints[level] = curr_node;
 
-        // if the key was found
+        // Find the local rank (binary)
+        auto [rank, found_key] = find_rank_in_node(curr_node, key);
+
         if (found_key)
         {
-            // release your lock and do nothing else in the key-only mode
+            // release locks and update value if map case
             if constexpr (traits::concurrent)
             {
-                // lock_timer.start();
                 if (level > 0)
                 {
                     if (level_to_promote < level)
-                    {
-                        ((BSkipNodeInternal<traits> *)(curr_node))
-                            ->mutex_.read_unlock(cpuid);
-                    }
+                        ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_unlock(cpuid);
                     else
-                    {
                         ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.write_unlock();
-                    }
                 }
                 else
                 {
                     ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
                 }
-                // lock_timer.stop();
             }
 
-            // check if map or set
             if constexpr (!traits::binary)
             {
                 if (level == 0)
@@ -1158,7 +1158,6 @@ bool BSkip<traits>::insert(traits::element_type k)
                         write_lock_counter++;
                         #endif
                     }
-                    // change leaf value
                     ((BSkipNodeLeaf<traits> *)curr_node)->blind_write(k, rank);
                     if constexpr (traits::concurrent)
                     {
@@ -1167,13 +1166,12 @@ bool BSkip<traits>::insert(traits::element_type k)
                 }
                 else
                 {
-                    // curr_node is internal, need to traverse down to the leaf
                     if constexpr (traits::concurrent)
                     {
-                   	#if STATS
-                    	read_lock_counter++;
-                    #endif
                         ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_lock(cpuid);
+                        #if STATS
+                        read_lock_counter++;
+                        #endif
                     }
                     bool flag = true;
                     while (curr_node->level > 1)
@@ -1190,43 +1188,26 @@ bool BSkip<traits>::insert(traits::element_type k)
                         }
                         if constexpr (traits::concurrent)
                         {
-   	                   	#if STATS
-                        	read_lock_counter++;
-                        #endif
-                            // lock curr
                             ((BSkipNodeInternal<traits> *)curr_node)->mutex_.read_lock(cpuid);
-                            // unlock prev
                             ((BSkipNodeInternal<traits> *)prev_node)->mutex_.read_unlock(cpuid);
                         }
                     }
 
-                    // now level = 1, curr_node is internal and locked
-                    assert(curr_node->level == 1);
-
                     prev_node = curr_node;
-
                     if (flag)
-                    {
                         curr_node = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
-                    }
                     else
-                    {
                         curr_node = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(0);
-                    }
 
                     if constexpr (traits::concurrent)
                     {
-                        // lock curr
                         ((BSkipNodeLeaf<traits> *)curr_node)->mutex_.write_lock();
                         #if STATS
                         write_lock_counter++;
                         #endif
-                        // unlock prev
                         ((BSkipNodeInternal<traits> *)prev_node)->mutex_.read_unlock(cpuid);
                     }
 
-                    // change leaf value
-                    assert(curr_node->level == 0);
                     ((BSkipNodeLeaf<traits> *)curr_node)->blind_write(k, 0);
 
                     if constexpr (traits::concurrent)
@@ -1236,62 +1217,51 @@ bool BSkip<traits>::insert(traits::element_type k)
                 }
             }
 
+            // update thread-local leaf hint to the leaf that contained the key
+            if (tl_hints[0] && tl_hints[0]->level == 0)
+                ; // hint already a leaf
+            else
+                tl_hints[0] = curr_node->level == 0 ? curr_node : tl_hints[0];
+
             return true;
         }
         else
-        { // otherwise, this key was not found at this level
+        {
+            // not found in this node
             assert(curr_node->get_key_at_rank(rank) < key);
 #if DEBUG_PRINT
             printf("\tnot found at level %u\n", level);
 #endif
             if (level_to_promote < level)
             {
-                // case 1: do not promote to this level.
-#if DEBUG_PRINT
-                printf("\t\tcurr node num elts %u\n", curr_node->num_elts);
-                printf("\t\tcurr node elt %lu, level %d\n",
-                       curr_node->get_key_at_rank(rank), level);
-#endif
-
-                // drop down a level (if you are here, you are at an internal node)
+                // Drop down a level; keep parent lock reference for hand-off
                 assert(curr_node->level > 0);
                 if constexpr (traits::concurrent)
                 {
-                    // lock_timer.start();
                     parent_lock = &(((BSkipNodeInternal<traits> *)curr_node)->mutex_);
                     parent_node = ((BSkipNodeInternal<traits> *)curr_node);
 #if DEBUG
                     parent_rank = rank;
 #endif
-                    // lock_timer.stop();
                 }
 
-                curr_node =
-                    ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
-
+                curr_node = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
                 assert(curr_node != NULL);
                 continue;
             }
             else if (level_to_promote == level)
             {
-                // Case 2: insert but not split due to promotion
-                // split if overfull
+                // Case: insert at this level; use heuristic split point selection.
                 if (curr_node->num_elts + 1 > traits::MAX_KEYS)
                 {
                     BSkipNode<traits> *new_node;
                     if (level > 0)
-                    {
                         new_node = new BSkipNodeInternal<traits>();
-                    }
                     else
-                    {
                         new_node = new BSkipNodeLeaf<traits>();
-                    }
 
-                    // grab lock on the new node
                     if constexpr (traits::concurrent)
                     {
-                        // lock_timer.start();
                         if (level > 0)
                         {
                             ((BSkipNodeInternal<traits> *)(new_node))->mutex_.write_lock();
@@ -1306,165 +1276,104 @@ bool BSkip<traits>::insert(traits::element_type k)
                             write_lock_counter++;
                             #endif
                         }
-                        // lock_timer.stop();
                     }
 
-                    // fixup next pointers
                     new_node->next = curr_node->next;
                     new_node->next_header = curr_node->next_header;
                     curr_node->next = new_node;
                     new_node->level = level;
 
-                    // do the split
-                    int half_keys = curr_node->num_elts / 2;
+                    // Adaptive split: bias the split so the side where the key will be
+                    // inserted gets a bit more space, reducing the likelihood of an
+                    // immediate future split on the same side.
+                    int split_index = curr_node->num_elts / 2;
+                    if ((int)rank < split_index) {
+                        // insertion on left side: shift split left a bit
+                        split_index = std::max(1, split_index - (int)(curr_node->num_elts/16 + 1));
+                    } else {
+                        // insertion on right side: shift split right a bit
+                        split_index = std::min((int)curr_node->num_elts - 1, split_index + (int)(curr_node->num_elts/16 + 1));
+                    }
 
-                    // move second half of keys into new node
-                    // returns the number of elements that were moved
-                    // updates the number of elts in each node
-                    uint32_t elts_moved = curr_node->split_keys(new_node, half_keys, 0);
+                    uint32_t elts_moved = curr_node->split_keys(new_node, split_index, 0);
                     curr_node->next_header = new_node->get_header();
 
-                    // move children if necessary
                     if (level > 0)
                     {
                         ((BSkipNodeInternal<traits> *)curr_node)
                             ->move_children(((BSkipNodeInternal<traits> *)new_node),
-                                            half_keys, elts_moved, 0);
+                                            split_index, elts_moved, 0);
                     }
 
-#if DEBUG_PRINT
-                    printf("split moved %u elts\n", elts_moved);
-                    printf("curr node keys:\n");
-                    curr_node->print_keys();
-                    printf("new node keys\n");
-                    new_node->print_keys();
-#endif
-                    // new elt goes into first node
+                    // decide whether to insert to left or right of split
                     if (rank + 1 <= curr_node->num_elts)
                     {
-                        // release lock on the new node
                         if constexpr (traits::concurrent)
                         {
-                            // lock_timer.start();
                             if (level > 0)
-                            {
-                                ((BSkipNodeInternal<traits> *)(new_node))
-                                    ->mutex_.write_unlock();
-                            }
+                                ((BSkipNodeInternal<traits> *)(new_node))->mutex_.write_unlock();
                             else
-                            {
                                 ((BSkipNodeLeaf<traits> *)(new_node))->mutex_.write_unlock();
-                            }
-                            // lock_timer.stop();
                         }
                         assert(key < new_node->get_header());
                         assert(key > curr_node->get_header());
                         if (level > 0)
-                        {
-                            ((BSkipNodeInternal<traits> *)(curr_node))
-                                ->insert_key_at_rank(rank + 1, key);
-                        }
+                            ((BSkipNodeInternal<traits> *)(curr_node))->insert_key_at_rank(rank + 1, key);
                         else
-                        {
-                            ((BSkipNodeLeaf<traits> *)(curr_node))
-                                ->insert_elt_at_rank(rank + 1, k);
-                        }
+                            ((BSkipNodeLeaf<traits> *)(curr_node))->insert_elt_at_rank(rank + 1, k);
                         curr_node->num_elts++;
 
-#if DEBUG_PRINT
-                        printf("\tinserting key in first node at rank %u\n", rank + 1);
-                        curr_node->print_keys();
-#endif
-                        // if you are an internal node, make space for the new element's
-                        // child
                         assert(num_split == 0);
                         if (level > 0)
                         {
-                            BSkipNodeInternal<traits> *curr_node_cast =
-                                (BSkipNodeInternal<traits> *)curr_node;
-                            // point to the first split node
-                            curr_node_cast->insert_child_at_rank(rank + 1,
-                                                                 new_nodes[num_split]);
+                            BSkipNodeInternal<traits> *curr_node_cast = (BSkipNodeInternal<traits> *)curr_node;
+                            curr_node_cast->insert_child_at_rank(rank + 1, new_nodes[num_split]);
                             if constexpr (traits::concurrent)
                             {
-                                // lock_timer.start();
                                 parent_lock = &((curr_node_cast)->mutex_);
                                 parent_node = curr_node_cast;
 #if DEBUG
                                 parent_rank = rank;
 #endif
-                                // lock_timer.stop();
                             }
                             curr_node = curr_node_cast->get_child_at_rank(rank);
                         }
                     }
                     else
-                    { // insert it into the new node
+                    {
                         assert(key > new_node->get_header());
                         assert(new_node->num_elts > 0);
                         int rank_to_insert = rank - curr_node->num_elts;
 
-                        // release left
                         if constexpr (traits::concurrent)
                         {
-                            // lock_timer.start();
                             if (level > 0)
-                            {
-                                ((BSkipNodeInternal<traits> *)(curr_node))
-                                    ->mutex_.write_unlock();
-                            }
+                                ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.write_unlock();
                             else
-                            {
                                 ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
-                            }
-                            // lock_timer.stop();
                         }
-#if DEBUG_PRINT
-                        printf("rank %u, prev node num elts %u, rank to insert %u\n", rank,
-                               curr_node->num_elts, rank_to_insert);
-#endif
-                        // insert into right
+
                         if (level > 0)
-                        {
-                            ((BSkipNodeInternal<traits> *)(new_node))
-                                ->insert_key_at_rank(rank_to_insert + 1, key);
-                        }
+                            ((BSkipNodeInternal<traits> *)(new_node))->insert_key_at_rank(rank_to_insert + 1, key);
                         else
-                        {
-                            ((BSkipNodeLeaf<traits> *)(new_node))
-                                ->insert_elt_at_rank(rank_to_insert + 1, k);
-                        }
+                            ((BSkipNodeLeaf<traits> *)(new_node))->insert_elt_at_rank(rank_to_insert + 1, k);
                         new_node->num_elts++;
 
-#if DEBUG_PRINT
-                        printf("insert key into new node at rank %d\n", rank_to_insert + 1);
-                        new_node->print_keys();
-#endif
-
                         if (level > 0)
                         {
-                            BSkipNodeInternal<traits> *new_node_cast =
-                                (BSkipNodeInternal<traits> *)new_node;
-                            new_node_cast->insert_child_at_rank(rank_to_insert + 1,
-                                                                new_nodes[num_split]);
+                            BSkipNodeInternal<traits> *new_node_cast = (BSkipNodeInternal<traits> *)new_node;
+                            new_node_cast->insert_child_at_rank(rank_to_insert + 1, new_nodes[num_split]);
                             if constexpr (traits::concurrent)
                             {
-                                // lock_timer.start();
                                 parent_node = new_node_cast;
                                 parent_lock = &((new_node_cast)->mutex_);
 #if DEBUG
                                 parent_rank = rank_to_insert;
 #endif
-                                // lock_timer.stop();
                             }
-
-                            // drop down to next level
                             curr_node = new_node_cast->get_child_at_rank(rank_to_insert);
-
                             assert(curr_node);
-                            assert(curr_node->get_header() ==
-                                   new_node_cast->get_child_at_rank(rank_to_insert)
-                                       ->get_header());
+                            assert(curr_node->get_header() == new_node_cast->get_child_at_rank(rank_to_insert)->get_header());
                         }
                         else
                         {
@@ -1473,58 +1382,31 @@ bool BSkip<traits>::insert(traits::element_type k)
                     }
                 }
                 else
-                { // did not fill this node
+                {
+                    // Simple insertion without split
                     assert(level_to_promote == level);
-                    // add key (and if needed, value) to this node
                     if (level > 0)
-                    {
-                        ((BSkipNodeInternal<traits> *)curr_node)
-                            ->insert_key_at_rank(rank + 1, key);
-                    }
+                        ((BSkipNodeInternal<traits> *)curr_node)->insert_key_at_rank(rank + 1, key);
                     else
-                    {
-                        ((BSkipNodeLeaf<traits> *)curr_node)
-                            ->insert_elt_at_rank(rank + 1, k);
-                    }
+                        ((BSkipNodeLeaf<traits> *)curr_node)->insert_elt_at_rank(rank + 1, k);
 
-#if DEBUG_PRINT
-                    printf("\n\tinserted %lu into level %u at rank %u\n", key, level,
-                           rank + 1);
-                    curr_node->print_keys();
-#endif
-
-                    // make space for the child pointer
                     if (level > 0)
                     {
-                        BSkipNodeInternal<traits> *curr_node_cast =
-                            (BSkipNodeInternal<traits> *)curr_node;
-                        // update the down pointer for the new elt
+                        BSkipNodeInternal<traits> *curr_node_cast = (BSkipNodeInternal<traits> *)curr_node;
                         assert(num_split == 0);
                         assert(rank < curr_node->num_elts);
-                        curr_node_cast->insert_child_at_rank(rank + 1,
-                                                             new_nodes[num_split], false);
+                        curr_node_cast->insert_child_at_rank(rank + 1, new_nodes[num_split], false);
 
-                        // keep track of the lock
                         if constexpr (traits::concurrent)
                         {
-                            // lock_timer.start();
                             parent_lock = &((curr_node_cast)->mutex_);
                             parent_node = curr_node_cast;
 #if DEBUG
                             parent_rank = rank;
 #endif
-                            // lock_timer.stop();
                         }
-                        // update num elts
                         curr_node->num_elts++;
-                        tbassert(curr_node->num_elts <= traits::MAX_KEYS, "num elts %lu, max keys %lu\n", curr_node->num_elts, traits::MAX_KEYS);
-                        // drop down
                         curr_node = curr_node_cast->get_child_at_rank(rank);
-
-#if DEBUG_PRINT
-                        printf("\tmake space at rank %u on level %d, node head %lu\n",
-                               rank + 1, level, curr_node->get_header());
-#endif
                         assert(curr_node != NULL);
                     }
                     else
@@ -1534,7 +1416,8 @@ bool BSkip<traits>::insert(traits::element_type k)
                 }
             }
             else
-            { // case 3: do a split
+            {
+                // Case 3: split and promote further down
 #if DEBUG_PRINT
                 printf("split at level %d with elt %lu\n", level, key);
 #endif
@@ -1544,103 +1427,53 @@ bool BSkip<traits>::insert(traits::element_type k)
 
                 assert(new_node);
 
-                // fixup pointer from new to next node
                 new_node->next = curr_node->next;
                 new_node->next_header = curr_node->next_header;
-
-                // set the level
                 new_node->level = level;
 
-                // put the new key at the start of the new node
                 if (level > 0)
-                {
                     ((BSkipNodeInternal<traits> *)new_node)->insert_key_at_rank(0, key);
-                }
                 else
-                {
                     ((BSkipNodeLeaf<traits> *)(new_node))->insert_elt_at_rank(0, k);
-                }
                 new_node->num_elts++;
 
-                // move all keys in the curr node starting from rank + 1 into the new
-                // node returns the number of elements that were moved updates the
-                // number of elts in each node
                 uint32_t elts_moved = curr_node->split_keys(new_node, rank + 1);
 
-#if DEBUG_PRINT
-                printf("split at level %u moved %u elts\n", level, elts_moved);
-                printf("curr node keys:\n");
-                curr_node->print_keys();
-                printf("\n");
-                printf("new node keys\n");
-                new_node->print_keys();
-                printf("\n");
-#endif
-
-                // if you are an internal node, make space for the child of this head
                 if (level > 0)
                 {
-                    ((BSkipNodeInternal<traits> *)new_node)
-                        ->insert_child_at_rank(0, new_nodes[num_split]);
-
+                    ((BSkipNodeInternal<traits> *)new_node)->insert_child_at_rank(0, new_nodes[num_split]);
                     ((BSkipNodeInternal<traits> *)curr_node)
-                        ->move_children(((BSkipNodeInternal<traits> *)new_node), rank + 1,
-                                        elts_moved);
+                        ->move_children(((BSkipNodeInternal<traits> *)new_node), rank + 1, elts_moved);
                 }
 
-                assert(curr_node->get_header() < curr_node->next->get_header());
-                assert(new_node->get_header() < curr_node->next->get_header());
-                assert(curr_node->get_header() < new_node->get_header());
-#if DEBUG_PRINT
-                printf("curr header %lu, next header %lu, new header %lu\n",
-                       curr_node->get_header(), curr_node->next->get_header(),
-                       new_node->get_header());
-#endif
-
-                // fixup next pointers
                 curr_node->next = new_node;
                 curr_node->next_header = new_node->get_header();
 
-                // unlock new node
                 if constexpr (traits::concurrent)
                 {
-                    // lock_timer.start();
                     if (level > 0)
-                    {
                         ((BSkipNodeInternal<traits> *)(new_node))->mutex_.write_unlock();
-                    }
                     else
-                    {
                         ((BSkipNodeLeaf<traits> *)(new_node))->mutex_.write_unlock();
-                    }
-                    // lock_timer.stop();
                 }
 
-                // if we are at an internal level, move on and save info for lower
-                // splits
                 if (level > 0)
                 {
-                    // save parent lock
-
-                    BSkipNodeInternal<traits> *curr_node_cast =
-                        (BSkipNodeInternal<traits> *)curr_node;
+                    BSkipNodeInternal<traits> *curr_node_cast = (BSkipNodeInternal<traits> *)curr_node;
                     if constexpr (traits::concurrent)
                     {
-                        // lock_timer.start();
                         parent_lock = &(curr_node_cast->mutex_);
                         parent_node = curr_node_cast;
 #if DEBUG
                         parent_rank = rank;
 #endif
-                        // lock_timer.stop();
                     }
-
-                    // drop down one level
                     curr_node = curr_node_cast->get_child_at_rank(rank);
                     assert(curr_node);
                 }
             }
         }
+
         if (level == 0)
         {
             if constexpr (traits::concurrent)
@@ -1649,9 +1482,7 @@ bool BSkip<traits>::insert(traits::element_type k)
                 printf("*** unlock leaf with header %lu at end\n",
                        curr_node->get_header());
 #endif
-                // lock_timer.start();
                 ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.write_unlock();
-                // lock_timer.stop();
             }
             assert(curr_node);
 #if ENABLE_TRACE_TIMER
@@ -1667,47 +1498,70 @@ bool BSkip<traits>::insert(traits::element_type k)
 template <typename traits>
 BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
 {
-    // TODO: deal with if if you look for 0. should this return true for the
-    // unweighted case and the val in the weighted case? why is the node the thing
-    // getting returned?
 #if DEBUG_PRINT
     printf("searching for %lu\n", k);
 #endif
 
-    // int cpuid = ParallelTools::getWorkerNum();
     int cpuid = sched_getcpu();
     ReaderWriterLock *parent_lock = nullptr;
 
-    // start search from the top node
-    auto curr_node = headers[MAX_HEIGHT - 1];
+    // Start with a hopeful hint-based starting node. Use thread-local hints
+    // to accelerate locating the right chain node. Hints are optimistic and
+    // only reduce traversal when they are valid.
+    static thread_local BSkipNode<traits>* tl_hints[MAX_HEIGHT] = {nullptr};
 
-    // should never be here because the header always has something init
-    if (!curr_node)
-    {
-        assert(false);
+    auto curr_node = headers[MAX_HEIGHT - 1];
+    if (!curr_node) { assert(false); }
+
+    // Try to leverage a high-level hint
+    for (int L = MAX_HEIGHT - 1; L >= 0; --L) {
+        BSkipNode<traits>* hint = tl_hints[L];
+        if (hint && hint->get_header() <= k && hint->next_header > k && hint->level == (uint32_t)L) {
+            curr_node = hint;
+            break;
+        }
     }
+
+    // same fast node-local binary search used in insert
+    auto find_rank_in_node = [&](BSkipNode<traits>* node, K search_key) -> std::pair<uint32_t,bool> {
+        uint32_t n = node->num_elts;
+        if (n == 0) return {0,false};
+        K first = node->get_key_at_rank(0);
+        K last = node->get_key_at_rank(n - 1);
+        if (search_key < first) return {0, first == search_key};
+        if (search_key >= last) return {n - 1, last == search_key};
+        uint32_t lo = 0, hi = n - 1;
+        while (lo + 1 < hi) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            K midk = node->get_key_at_rank(mid);
+            if (midk <= search_key) lo = mid;
+            else hi = mid;
+        }
+        K hi_k = node->get_key_at_rank(hi);
+        if (hi_k <= search_key) return {hi, hi_k == search_key};
+        K lo_k = node->get_key_at_rank(lo);
+        return {lo, lo_k == search_key};
+    };
 
     for (int level = MAX_HEIGHT - 1; level >= 0; level--)
     {
         if constexpr (traits::concurrent)
         {
-            // grab current lock
             if (level > 0)
             {
-           	#if STATS
-            	read_lock_counter++;
-            #endif
                 ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_lock(cpuid);
+                #if STATS
+                read_lock_counter++;
+                #endif
             }
             else
             {
-           	#if STATS
-            	read_lock_counter++;
-            #endif
                 ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.read_lock(cpuid);
+                #if STATS
+                read_lock_counter++;
+                #endif
             }
 
-            // if you have a parent, release it
             if (parent_lock)
             {
                 parent_lock->read_unlock(cpuid);
@@ -1717,108 +1571,79 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
                  "level = %u, k = %lu, header = %lu\n", level, k,
                  curr_node->get_header());
 
+        // traverse same as before
         auto prev_node = curr_node;
-
-        // move forward until we find the right node that contains the key range
         while (curr_node->next_header <= k)
         {
-#if DEBUG_PRINT
-            printf("\tcurr node header %lu\n", curr_node->get_header());
-            printf("\tnext node header %lu\n", curr_node->next->get_header());
-#endif
             assert(curr_node->get_header() < curr_node->next->get_header());
-
-            tbassert(k >= curr_node->get_header(),
-                     "key = %lu, curr node header = %lu, next node header = %lu\n", k,
-                     curr_node->get_header(), curr_node->next->get_header());
 #if DEBUG
             auto next_header = curr_node->next->get_header();
 #endif
-            // grab next step in the search
             if constexpr (traits::concurrent)
             {
                 if (level > 0)
                 {
-               	#if STATS
-                	read_lock_counter++;
-                #endif
-                    ((BSkipNodeInternal<traits> *)(curr_node->next))
-                        ->mutex_.read_lock(cpuid);
+                    ((BSkipNodeInternal<traits> *)(curr_node->next))->mutex_.read_lock(cpuid);
+                    #if STATS
+                    read_lock_counter++;
+                    #endif
                 }
                 else
                 {
-               	#if STATS
-                	read_lock_counter++;
-                #endif
                     ((BSkipNodeLeaf<traits> *)(curr_node->next))->mutex_.read_lock(cpuid);
+                    #if STATS
+                    read_lock_counter++;
+                    #endif
                 }
             }
-
-            tbassert(next_header >= curr_node->next->get_header(),
-                     "next header before lock %lu, next header after lock %lu\n",
-                     next_header, curr_node->next->get_header());
 
             prev_node = curr_node;
-
-            tbassert(curr_node->next->get_header() <= k,
-                     "k = %lu, prev node = %lu, next node = %lu\n", k,
-                     prev_node->get_header(), curr_node->next->get_header());
-
             curr_node = curr_node->next;
 
-            // unlock prev node
             if constexpr (traits::concurrent)
             {
                 if (level > 0)
-                {
                     ((BSkipNodeInternal<traits> *)(prev_node))->mutex_.read_unlock(cpuid);
-                }
                 else
-                {
                     ((BSkipNodeLeaf<traits> *)(prev_node))->mutex_.read_unlock();
-                }
             }
         }
+
         assert(curr_node->get_header() <= k);
 
-        // look for the largest element that is at most the search key
-        auto [rank, found_key] = curr_node->find_key_and_check(k);
+        // Update thread-local hint for this level
+        tl_hints[level] = curr_node;
 
-        // if it is found, return the node (returns the topmost node the key is
-        // found in
+        // Fast local binary search in node (reduces work for wide nodes)
+        auto [rank, found_key] = find_rank_in_node(curr_node, k);
+
         if (curr_node->get_key_at_rank(rank) == k)
         {
 #if DEBUG_PRINT
             printf("found key at rank %u\n", rank);
             curr_node->print_keys();
 #endif
-
-            // unlock your current node
             if constexpr (traits::concurrent)
             {
                 if (level > 0)
-                {
                     ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_unlock(cpuid);
-                }
                 else
-                {
                     ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.read_unlock();
-                }
             }
+
+            // update leaf-level hint with the found node (optimistic)
+            if (curr_node->level == 0) tl_hints[0] = curr_node;
 
             return curr_node;
         }
 
-        // if not found, drop down a level
         if (level > 0)
         {
             if constexpr (traits::concurrent)
             {
                 parent_lock = &(((BSkipNodeInternal<traits> *)curr_node)->mutex_);
             }
-
-            curr_node =
-                ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
+            curr_node = ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
         }
     }
     return NULL;

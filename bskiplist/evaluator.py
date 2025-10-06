@@ -19,6 +19,7 @@ def _compile_and_test(candidate_program_path: str, make_env: Optional[Dict[str, 
     """Compile candidate program and run tests"""
     artifacts: Dict[str, Any] = {"compile": {}}
     original_backup_path: Optional[str] = None
+    temp_candidate_path: Optional[str] = None
 
     try:
         # Backup original bskip.h
@@ -27,15 +28,35 @@ def _compile_and_test(candidate_program_path: str, make_env: Optional[Dict[str, 
             os.close(fd)
             shutil.copy2(BSKIP_HEADER_PATH, original_backup_path)
 
-        # Replace with candidate
-        shutil.copy2(candidate_program_path, BSKIP_HEADER_PATH)
+        # Handle candidate program - could be a .h file or a JSON file
+        if candidate_program_path.endswith('.json'):
+            # Extract code from JSON file
+            import json
+            with open(candidate_program_path, 'r') as f:
+                candidate_data = json.load(f)
+            candidate_code = candidate_data.get('code', '')
+            
+            # Create temporary .h file
+            fd, temp_candidate_path = tempfile.mkstemp(suffix=".h", prefix="candidate_")
+            os.close(fd)
+            with open(temp_candidate_path, 'w') as f:
+                f.write(candidate_code)
+            
+            # Replace with candidate
+            shutil.copy2(temp_candidate_path, BSKIP_HEADER_PATH)
+        else:
+            # Direct .h file
+            shutil.copy2(candidate_program_path, BSKIP_HEADER_PATH)
 
         # Clean and build
         clean_proc = subprocess.run(["make", "clean"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
         build_proc = subprocess.run(["make", "-j"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
 
         if build_proc.returncode != 0:
-            raise RuntimeError("Build failed")
+            print(f"[DEBUG] Build failed with return code {build_proc.returncode}")
+            print(f"[DEBUG] Build stderr: {build_proc.stderr}")
+            print(f"[DEBUG] Build stdout: {build_proc.stdout}")
+            raise RuntimeError(f"Build failed with rc={build_proc.returncode}, stderr={build_proc.stderr}")
 
         if not os.path.exists(YSCSB_BIN_PATH):
             raise FileNotFoundError("Built binary 'ycsb' not found")
@@ -43,21 +64,29 @@ def _compile_and_test(candidate_program_path: str, make_env: Optional[Dict[str, 
         # Run correctness test
         test_proc = subprocess.run(["make", "test"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
         if test_proc.returncode != 0:
-            raise RuntimeError("Test build failed")
+            print(f"[DEBUG] Test build failed with return code {test_proc.returncode}")
+            print(f"[DEBUG] Test build stderr: {test_proc.stderr}")
+            print(f"[DEBUG] Test build stdout: {test_proc.stdout}")
+            raise RuntimeError(f"Test build failed with rc={test_proc.returncode}, stderr={test_proc.stderr}")
 
         test_bin_path = os.path.join(BSKIP_DIR, "test")
         if os.path.exists(test_bin_path):
             test_run_proc = subprocess.run(["./test"], cwd=BSKIP_DIR, capture_output=True, text=True, timeout=60)
             if test_run_proc.returncode != 0 or "success" not in test_run_proc.stdout:
-                raise RuntimeError("Correctness test failed")
+                print(f"[DEBUG] Correctness test failed with return code {test_run_proc.returncode}")
+                print(f"[DEBUG] Test stderr: {test_run_proc.stderr}")
+                print(f"[DEBUG] Test stdout: {test_run_proc.stdout}")
+                raise RuntimeError(f"Correctness test failed with rc={test_run_proc.returncode}, stderr={test_run_proc.stderr}, stdout={test_run_proc.stdout}")
 
-        artifacts["restore_info"] = {"original_backup_path": original_backup_path}
+        artifacts["restore_info"] = {"original_backup_path": original_backup_path, "temp_candidate_path": temp_candidate_path}
 
     except Exception as e:
         # Restore on error
         if original_backup_path and os.path.exists(original_backup_path):
             shutil.copy2(original_backup_path, BSKIP_HEADER_PATH)
             os.remove(original_backup_path)
+        if temp_candidate_path and os.path.exists(temp_candidate_path):
+            os.remove(temp_candidate_path)
         raise
 
     return artifacts
@@ -66,10 +95,14 @@ def _compile_and_test(candidate_program_path: str, make_env: Optional[Dict[str, 
 def _restore_original(restore_info: Dict[str, Any]) -> None:
     """Restore original files"""
     original_backup_path = restore_info.get("original_backup_path")
+    temp_candidate_path = restore_info.get("temp_candidate_path")
     
     if original_backup_path and os.path.exists(original_backup_path):
         shutil.copy2(original_backup_path, BSKIP_HEADER_PATH)
         os.remove(original_backup_path)
+    
+    if temp_candidate_path and os.path.exists(temp_candidate_path):
+        os.remove(temp_candidate_path)
 
 
 def _run_benchmark(dataset_dir: str, workload: str, threads: int, output_file: str) -> Dict[str, Any]:
@@ -228,7 +261,10 @@ def evaluate(program_path: str) -> EvaluationResult:
         candidate_result = _run_benchmark(dataset_dir, workload, threads, f"{output_file}.candidate")
         
         if candidate_result["run"]["rc"] != 0:
-            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": "Candidate run failed"})
+            print(f"[DEBUG] Candidate run failed with return code {candidate_result['run']['rc']}")
+            print(f"[DEBUG] Candidate stderr: {candidate_result['run']['stderr']}")
+            print(f"[DEBUG] Candidate stdout: {candidate_result['run']['stdout']}")
+            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate run failed with rc={candidate_result['run']['rc']}, stderr={candidate_result['run']['stderr']}"})
         
         candidate_metrics = _parse_throughput(candidate_result["run"]["stdout"], "candidate")
         metrics.update(candidate_metrics)
@@ -238,6 +274,7 @@ def evaluate(program_path: str) -> EvaluationResult:
         _restore_original(cand_artifacts)
         
     except Exception as e:
+        print(f"[DEBUG] Candidate evaluation failed with exception: {e}")
         return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate failed: {e}"})
     
     # Step 3: Calculate speedup
