@@ -31,14 +31,15 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent.parent  # Go up from Ablation/flip_coins_optimization to project root
 BSKIP_DIR = PROJECT_ROOT / "bskiplist"
 ORIGINAL_BSKIP = BSKIP_DIR / "bskip.h"
+DATA_DIR = "/mydata/skip_data/uniform/"
 BEST_PROGRAM = PROJECT_ROOT / "bskiplist" / "openevolve_output" / "best" / "best_program.h"
 ABLATION_DIR = PROJECT_ROOT / "Ablation" / "flip_coins_optimization"
 RESULTS_FILE = ABLATION_DIR / "flip_coins_ablation_results.json"
 
 # Test configuration
 NUM_RUNS = 3
-WORKLOAD = "ycsb-a"  # Read-heavy workload
-NUM_THREADS = 48
+WORKLOAD = "a"  # Read-heavy workload
+NUM_THREADS = 32
 
 def backup_original():
     """Backup the original bskip.h"""
@@ -83,10 +84,10 @@ def run_benchmark():
     # Run the benchmark
     cmd = [
         "./ycsb",
-        "-l", f"{BSKIP_DIR}/data/uniform/load_100M_uniform_uint64",
-        "-i", f"{BSKIP_DIR}/data/uniform/txns_100M_100r_0i_uniform_uint64",
-        "-n", str(NUM_THREADS),
-        "-o", "/dev/null"
+        f"{DATA_DIR},
+        f"{WORKLOAD}",
+        str(NUM_THREADS),
+        "ablation_flip_coins_run.txt"
     ]
     
     print(f"   Running: {' '.join(cmd)}")
