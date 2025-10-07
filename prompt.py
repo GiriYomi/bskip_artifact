@@ -198,7 +198,7 @@ Constraints:
 
 Be bold, creative, and revolutionary in your approach. The goal is to make a single, significant algorithmic contribution that advances the state of the art in search algorithms."""
 
-prompt_heuristics = """You are evolving the flip_coins function in the B-skiplist to discover optimal heuristic parameters and decision formulas that maximize YCSB throughput. Focus on the code within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
+prompt7 = """You are evolving the flip_coins function in the B-skiplist to discover optimal heuristic parameters and decision formulas that maximize YCSB throughput. Focus on the code within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
 
 CRITICAL CONSTRAINT: Implement ONLY ONE algorithmic or heuristic innovation per evolution. Do NOT combine multiple ideas. Choose ONE approach and explore it deeply.
 
