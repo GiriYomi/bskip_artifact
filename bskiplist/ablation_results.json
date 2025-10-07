@@ -1,0 +1,26 @@
+[
+  {
+    "description": "Original (with all features)",
+    "file": "bskip_binary.h",
+    "load_throughput": 16.99099933333333,
+    "run_throughput": 16.840423333333334,
+    "combined": 16.915711333333334,
+    "runs": 3
+  },
+  {
+    "description": "Ablation (only optimized binary search)",
+    "file": "bskip_binary_ablation.h",
+    "load_throughput": 17.009783666666667,
+    "run_throughput": 16.78394366666667,
+    "combined": 16.896863666666665,
+    "runs": 3
+  },
+  {
+    "description": "Best Program (simplified + optimized binary search)",
+    "file": "openevolve_output/checkpoints/checkpoint_9/best_program.h",
+    "load_throughput": 17.346418333333332,
+    "run_throughput": 17.105714666666668,
+    "combined": 17.2260665,
+    "runs": 3
+  }
+]

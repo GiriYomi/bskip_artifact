@@ -3,7 +3,7 @@ import sys
 import asyncio
 from openevolve import OpenEvolve
 from openevolve.config import Config, LLMConfig, LLMModelConfig, DatabaseConfig, EvaluatorConfig, PromptConfig
-from prompt import prompt1, prompt2, prompt3, prompt4
+from prompt import prompt1, prompt2, prompt3, prompt4, prompt5
 
 
 async def main(prompt_num: int) -> None:
@@ -28,9 +28,9 @@ async def main(prompt_num: int) -> None:
         print("Running in CLOUDLAB environment")
 
     # Select prompt based on parameter
-    prompts = {1: prompt1, 2: prompt2, 3: prompt3, 4: prompt4}
+    prompts = {1: prompt1, 2: prompt2, 3: prompt3, 4: prompt4, 5: prompt5}
     if prompt_num not in prompts:
-        raise ValueError(f"Invalid prompt number: {prompt_num}. Must be 1, 2, 3, or 4.")
+        raise ValueError(f"Invalid prompt number: {prompt_num}. Must be 1, 2, 3, 4, or 5.")
     
     selected_prompt = prompts[prompt_num]
     print(f"Using prompt {prompt_num}")
@@ -95,7 +95,7 @@ async def main(prompt_num: int) -> None:
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         print("Usage: python run_skip.py <prompt_number>")
-        print("  prompt_number: 1, 2, 3, or 4")
+        print("  prompt_number: 1, 2, 3, 4, or 5")
         sys.exit(1)
     
     try:

@@ -217,7 +217,7 @@ def _compile_baseline(make_env: Optional[Dict[str, str]] = None) -> Dict[str, An
 
 
 def evaluate(program_path: str) -> EvaluationResult:
-    """Simple evaluator following OpenEvolve pattern: baseline -> candidate"""
+    """Optimized evaluator: test candidate first, then baseline only if candidate passes"""
     print(f"[DEBUG] Evaluating program: {program_path}")
     
     # Setup
@@ -236,9 +236,43 @@ def evaluate(program_path: str) -> EvaluationResult:
     artifacts = {}
     metrics = {}
     
-    # Step 1: Compile and run baseline
-    print("[DEBUG] Step 1: Compiling and running baseline...")
+    # Step 1: Test candidate compilation and basic functionality first
+    print("[DEBUG] Step 1: Testing candidate compilation and basic functionality...")
     try:
+        cand_artifacts = _compile_and_test(program_path, make_env)
+        print("[DEBUG] Candidate compilation and tests passed!")
+        
+    except Exception as e:
+        print(f"[DEBUG] Candidate failed early (compilation/tests): {e}")
+        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate failed early: {e}"})
+    
+    # Step 2: Run candidate benchmark
+    print("[DEBUG] Step 2: Running candidate benchmark...")
+    try:
+        candidate_result = _run_benchmark(dataset_dir, workload, threads, f"{output_file}.candidate")
+        
+        if candidate_result["run"]["rc"] != 0:
+            print(f"[DEBUG] Candidate run failed with return code {candidate_result['run']['rc']}")
+            print(f"[DEBUG] Candidate stderr: {candidate_result['run']['stderr']}")
+            print(f"[DEBUG] Candidate stdout: {candidate_result['run']['stdout']}")
+            _restore_original(cand_artifacts)
+            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate run failed with rc={candidate_result['run']['rc']}, stderr={candidate_result['run']['stderr']}"})
+        
+        candidate_metrics = _parse_throughput(candidate_result["run"]["stdout"], "candidate")
+        metrics.update(candidate_metrics)
+        print(f"[DEBUG] Candidate metrics: {candidate_metrics}")
+        
+    except Exception as e:
+        print(f"[DEBUG] Candidate benchmark failed with exception: {e}")
+        _restore_original(cand_artifacts)
+        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate benchmark failed: {e}"})
+    
+    # Step 3: Only now run baseline (candidate passed all tests)
+    print("[DEBUG] Step 3: Running baseline (candidate passed, now comparing)...")
+    try:
+        # Restore original for baseline
+        _restore_original(cand_artifacts)
+        
         # Ensure we start with clean baseline
         subprocess.run(["make", "clean"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
         _compile_baseline(make_env)
@@ -254,31 +288,8 @@ def evaluate(program_path: str) -> EvaluationResult:
     except Exception as e:
         return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Baseline failed: {e}"})
     
-    # Step 2: Compile and run candidate
-    print("[DEBUG] Step 2: Compiling and running candidate...")
-    try:
-        cand_artifacts = _compile_and_test(program_path, make_env)
-        candidate_result = _run_benchmark(dataset_dir, workload, threads, f"{output_file}.candidate")
-        
-        if candidate_result["run"]["rc"] != 0:
-            print(f"[DEBUG] Candidate run failed with return code {candidate_result['run']['rc']}")
-            print(f"[DEBUG] Candidate stderr: {candidate_result['run']['stderr']}")
-            print(f"[DEBUG] Candidate stdout: {candidate_result['run']['stdout']}")
-            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate run failed with rc={candidate_result['run']['rc']}, stderr={candidate_result['run']['stderr']}"})
-        
-        candidate_metrics = _parse_throughput(candidate_result["run"]["stdout"], "candidate")
-        metrics.update(candidate_metrics)
-        print(f"[DEBUG] Candidate metrics: {candidate_metrics}")
-        
-        # Restore original
-        _restore_original(cand_artifacts)
-        
-    except Exception as e:
-        print(f"[DEBUG] Candidate evaluation failed with exception: {e}")
-        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate failed: {e}"})
-    
-    # Step 3: Calculate speedup
-    print("[DEBUG] Step 3: Calculating speedup...")
+    # Step 4: Calculate speedup
+    print("[DEBUG] Step 4: Calculating speedup...")
     base_load = metrics.get("baseline_median_load_ops_per_us", 0.0)
     cand_load = metrics.get("candidate_median_load_ops_per_us", 0.0)
     base_run = metrics.get("baseline_median_run_ops_per_us", 0.0)

@@ -146,3 +146,29 @@ Key questions to explore:
 Invent new algorithms that advance the state of the art in concurrent search structures. Be bold, creative, and revolutionary in your approach to these fundamental operations."""
 
 
+prompt5 = """You are evolving ONLY the insert() function of the B-skiplist to achieve breakthrough performance through algorithmic innovation. Focus exclusively on the insert() function within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
+
+CRITICAL CONSTRAINT: Implement ONLY ONE creative algorithmic novelty per evolution. Do NOT combine multiple optimization ideas. Choose ONE innovative approach and explore it deeply.
+
+Primary objective:
+- Revolutionize the insert() algorithm through ONE fundamental algorithmic breakthrough that maximizes YCSB throughput.
+
+Your mission is to discover ONE fundamentally new way of thinking about insertion in skiplist structures. Think beyond traditional approaches and explore revolutionary concepts that could redefine how insertion works.
+
+Algorithmic Innovation Guidelines:
+- Focus on FUNDAMENTAL algorithmic changes, not code optimizations
+- NO caching, early stops, or micro-optimizations  
+- NO combining multiple ideas - pick ONE and explore it deeply
+- Think about the mathematical and algorithmic foundations
+- Consider how the innovation changes the fundamental behavior of insertion
+- Design for scalability and adaptability
+
+Constraints:
+- Preserve exact function signature: insert(traits::element_type k)
+- Maintain thread-safety and correctness guarantees
+- Keep the same public interface and compilation requirements
+- Focus ONLY on the insert() function within EVOLVE-BLOCK markers
+- Implement ONE innovative idea per evolution, not multiple optimizations
+
+Be bold, creative, and revolutionary in your approach. The goal is to make a single, significant algorithmic contribution that advances the state of the art in insertion algorithms."""
+

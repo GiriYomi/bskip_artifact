@@ -975,42 +975,27 @@ bool BSkip<traits>::insert(traits::element_type k)
     }
 
     // Helper: fast rank search inside a node using binary-search semantics.
-    // Returns pair<rank, found> where rank is the largest index i with key[i] <= k.
+    // Avoid repeated virtual calls for mid access by caching mid-key.
     auto find_rank_in_node = [&](BSkipNode<traits>* node, K search_key) -> std::pair<uint32_t,bool> {
         uint32_t n = node->num_elts;
-        // Defensive: if no elements, return {0,false}
-        if (n == 0) return {0, false};
+        if (n == 0) return {0,false};
 
-        // Quick check first/last to avoid more work
         K first = node->get_key_at_rank(0);
         K last = node->get_key_at_rank(n - 1);
-        if (search_key < first) {
-            // If search key less than the first, return 0 and not found.
-            return {0, first == search_key};
-        }
-        if (search_key >= last) {
-            return {n - 1, last == search_key};
-        }
+        if (search_key < first) return {0, first == search_key};
+        if (search_key >= last) return {n - 1, last == search_key};
 
-        // Binary search for largest index with key <= search_key.
-        uint32_t lo = 0;
-        uint32_t hi = n - 1;
+        uint32_t lo = 0, hi = n - 1;
         while (lo + 1 < hi) {
             uint32_t mid = lo + (hi - lo) / 2;
             K midk = node->get_key_at_rank(mid);
-            if (midk <= search_key) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
+            if (midk <= search_key) lo = mid;
+            else hi = mid;
         }
-        bool found = (node->get_key_at_rank(hi) == search_key) ? true : (node->get_key_at_rank(lo) == search_key);
-        // pick the largest index <= search_key
-        if (node->get_key_at_rank(hi) <= search_key) {
-            return {hi, node->get_key_at_rank(hi) == search_key};
-        } else {
-            return {lo, node->get_key_at_rank(lo) == search_key};
-        }
+        K hi_k = node->get_key_at_rank(hi);
+        if (hi_k <= search_key) return {hi, hi_k == search_key};
+        K lo_k = node->get_key_at_rank(lo);
+        return {lo, lo_k == search_key};
     };
 
     for (uint level = MAX_HEIGHT; level-- > 0;)
@@ -1540,39 +1525,22 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
     // same fast node-local binary search used in insert
     auto find_rank_in_node = [&](BSkipNode<traits>* node, K search_key) -> std::pair<uint32_t,bool> {
         uint32_t n = node->num_elts;
-        // Defensive: if no elements, return {0,false}
-        if (n == 0) return {0, false};
-
-        // Quick check first/last to avoid more work
+        if (n == 0) return {0,false};
         K first = node->get_key_at_rank(0);
         K last = node->get_key_at_rank(n - 1);
-        if (search_key < first) {
-            // If search key less than the first, return 0 and not found.
-            return {0, first == search_key};
-        }
-        if (search_key >= last) {
-            return {n - 1, last == search_key};
-        }
-
-        // Binary search for largest index with key <= search_key.
-        uint32_t lo = 0;
-        uint32_t hi = n - 1;
+        if (search_key < first) return {0, first == search_key};
+        if (search_key >= last) return {n - 1, last == search_key};
+        uint32_t lo = 0, hi = n - 1;
         while (lo + 1 < hi) {
             uint32_t mid = lo + (hi - lo) / 2;
             K midk = node->get_key_at_rank(mid);
-            if (midk <= search_key) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
+            if (midk <= search_key) lo = mid;
+            else hi = mid;
         }
-        bool found = (node->get_key_at_rank(hi) == search_key) ? true : (node->get_key_at_rank(lo) == search_key);
-        // pick the largest index <= search_key
-        if (node->get_key_at_rank(hi) <= search_key) {
-            return {hi, node->get_key_at_rank(hi) == search_key};
-        } else {
-            return {lo, node->get_key_at_rank(lo) == search_key};
-        }
+        K hi_k = node->get_key_at_rank(hi);
+        if (hi_k <= search_key) return {hi, hi_k == search_key};
+        K lo_k = node->get_key_at_rank(lo);
+        return {lo, lo_k == search_key};
     };
 
     for (int level = MAX_HEIGHT - 1; level >= 0; level--)
