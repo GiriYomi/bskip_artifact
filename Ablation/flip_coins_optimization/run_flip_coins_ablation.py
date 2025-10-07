@@ -38,7 +38,7 @@ RESULTS_FILE = ABLATION_DIR / "flip_coins_ablation_results.json"
 
 # Test configuration
 NUM_RUNS = 3
-WORKLOAD = "a"  # Read-heavy workload
+WORKLOAD = "a"  # Read-heavy workload (a, b, c, d, etc.)
 NUM_THREADS = 32
 
 def backup_original():
@@ -82,10 +82,11 @@ def compile_program():
 def run_benchmark():
     """Run a single benchmark and parse output"""
     # Run the benchmark
+    # Command format: ./ycsb <data_dir> <workload> <num_threads> <output_file>
     cmd = [
         "./ycsb",
-        f"{DATA_DIR},
-        f"{WORKLOAD}",
+        DATA_DIR,
+        WORKLOAD,
         str(NUM_THREADS),
         "ablation_flip_coins_run.txt"
     ]
