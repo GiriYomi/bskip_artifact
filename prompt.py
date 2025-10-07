@@ -95,7 +95,8 @@ Invent new algorithms, don't optimize existing ones. Your goal is to make algori
 
 Maintain readable, well-structured C++ with clear invariants and comprehensive error checking. Document your innovations clearly."""
 
-prompt4 = """You are evolving the B-skiplist's core insert and find algorithms to achieve breakthrough performance through novel algorithmic innovations. Focus exclusively on the fundamental search and insertion logic within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
+prompt4 = """You are evolving the B-skiplist's core insert and find algorithms to achieve breakthrough performance through novel algorithmic innovations. 
+Focus exclusively on the fundamental search and insertion logic within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
 
 Primary objective:
 - Revolutionize the insert() and find() algorithms to maximize YCSB throughput through fundamental algorithmic breakthroughs in search and insertion strategies.
@@ -134,7 +135,8 @@ Constraints:
 - Keep the same public interface and compilation requirements
 - Focus only on algorithmic improvements, not code optimization (caching, early stops, etc.)
 
-Your mission is to discover fundamentally new ways of thinking about search and insertion in skiplist-like structures. Think beyond traditional approaches and explore revolutionary concepts that could redefine how these operations work.
+Your mission is to discover fundamentally new ways of thinking about search and insertion in skiplist-like structures. 
+Think beyond traditional approaches and explore revolutionary concepts that could redefine how these operations work.
 
 Key questions to explore:
 - What if search paths could be learned and optimized dynamically?
@@ -146,7 +148,8 @@ Key questions to explore:
 Invent new algorithms that advance the state of the art in concurrent search structures. Be bold, creative, and revolutionary in your approach to these fundamental operations."""
 
 
-prompt5 = """You are evolving ONLY the insert() function of the B-skiplist to achieve breakthrough performance through algorithmic innovation. Focus exclusively on the insert() function within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
+prompt5 = """You are evolving ONLY the insert() function of the B-skiplist to achieve breakthrough performance through algorithmic innovation. 
+Focus exclusively on the insert() function within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
 
 CRITICAL CONSTRAINT: Implement ONLY ONE creative algorithmic novelty per evolution. Do NOT combine multiple optimization ideas. Choose ONE innovative approach and explore it deeply.
 
@@ -198,7 +201,8 @@ Constraints:
 
 Be bold, creative, and revolutionary in your approach. The goal is to make a single, significant algorithmic contribution that advances the state of the art in search algorithms."""
 
-prompt7 = """You are evolving the flip_coins function in the B-skiplist to discover optimal heuristic parameters and decision formulas that maximize YCSB throughput. Focus on the code within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
+prompt7 = """You are evolving the flip_coins function in the B-skiplist to discover optimal heuristic parameters and decision formulas that maximize YCSB throughput. 
+Focus on the code within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
 
 CRITICAL CONSTRAINT: Implement ONLY ONE algorithmic or heuristic innovation per evolution. Do NOT combine multiple ideas. Choose ONE approach and explore it deeply.
 
