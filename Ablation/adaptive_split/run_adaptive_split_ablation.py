@@ -139,7 +139,7 @@ def main():
             'description': 'Adaptive Split Only (Original with adaptive split)'
         },
         {
-            'file': 'openevolve_output_prompt3/best/best_program.h',
+            'file': '../bskiplist/openevolve_output_prompt3/best/best_program.h',
             'description': 'Best Program (All optimizations)'
         }
     ]
