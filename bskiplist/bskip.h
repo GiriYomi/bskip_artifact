@@ -831,7 +831,7 @@ private:
                     int level, traits::key_type max);
 };
 
-// EVOLVE-BLOCK-START
+
 
 template <typename traits>
 uint32_t BSkip<traits>::flip_coins(K k)
@@ -885,6 +885,8 @@ uint32_t BSkip<traits>::flip_coins(K k)
     assert(result < MAX_HEIGHT);
     return result;
 }
+
+// EVOLVE-BLOCK-START
 
 template <typename traits>
 #if ENABLE_TRACE_TIMER
@@ -1510,6 +1512,8 @@ bool BSkip<traits>::insert(traits::element_type k)
     return true;
 }
 
+// EVOLVE-BLOCK-END
+
 template <typename traits>
 BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
 {
@@ -1681,7 +1685,7 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
     return NULL;
 }
 
-// EVOLVE-BLOCK-END
+
 
 
 template <typename traits>
