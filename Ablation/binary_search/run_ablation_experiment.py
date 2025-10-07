@@ -13,6 +13,11 @@ import time
 import json
 from pathlib import Path
 
+# Configuration
+DATA_DIR = "/mydata/skip_data/uniform/"
+WORKLOAD = "a"
+NUM_THREADS = 32
+
 def run_benchmark(bskip_file, description, num_runs=3):
     """Run benchmark with a specific bskip.h file and return average metrics."""
     print(f"\n{'='*60}")
@@ -31,7 +36,7 @@ def run_benchmark(bskip_file, description, num_runs=3):
         # Clean and build
         print("Building...")
         subprocess.run(["make", "clean"], check=True, capture_output=True)
-        build_result = subprocess.run(["make", "-j"], capture_output=True, text=True)
+        build_result = subprocess.run(["make", "LATENCY=0", "-j"], capture_output=True, text=True)
         
         if build_result.returncode != 0:
             print(f"Build failed: {build_result.stderr}")
@@ -45,7 +50,7 @@ def run_benchmark(bskip_file, description, num_runs=3):
             print(f"Run {i+1}/{num_runs}...")
             
             # Run YCSB benchmark
-            cmd = ["./ycsb", "/home/yomi/0Projects/skip_data/uniform/", "a", "32", f"results/ablation_run_{i}.txt"]
+            cmd = ["./ycsb", DATA_DIR, WORKLOAD, str(NUM_THREADS), f"ablation_binary_run_{i}.txt"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             
             if result.returncode != 0:
@@ -118,8 +123,10 @@ def main():
     print("B-Skiplist Ablation Experiment")
     print("Testing the performance impact of binary search optimization")
     
-    # Change to bskiplist directory
-    os.chdir("/home/yomi/0Projects/bskip_artifact/bskiplist")
+    # Change to bskiplist directory - auto-detect from script location
+    script_dir = Path(__file__).parent.resolve()
+    bskiplist_dir = script_dir.parent.parent / "bskiplist"
+    os.chdir(str(bskiplist_dir))
     
     # Define test cases
     test_cases = [
@@ -132,7 +139,7 @@ def main():
             'description': 'Binary Search Only (BINARY_SEARCH=1)'
         },
         {
-            'file': '../openevolve_output/best/best_program.h',
+            'file': 'openevolve_output_prompt5/best/best_program.h',
             'description': 'Best Program (All optimizations)'
         }
     ]
