@@ -1,0 +1,26 @@
+[
+  {
+    "description": "Baseline (Original without adaptive split)",
+    "file": "../Ablation/adaptive_split/bskip_baseline_no_adaptive.h",
+    "load_throughput": 17.867402000000002,
+    "run_throughput": 17.49235966666667,
+    "combined": 17.679880833333332,
+    "runs": 3
+  },
+  {
+    "description": "Adaptive Split Only (Original with adaptive split)",
+    "file": "../Ablation/adaptive_split/bskip_with_adaptive.h",
+    "load_throughput": 17.9717335,
+    "run_throughput": 17.203314,
+    "combined": 17.58752375,
+    "runs": 2
+  },
+  {
+    "description": "Best Program (All optimizations)",
+    "file": "../openevolve_output/best/best_program.h",
+    "load_throughput": 17.865205,
+    "run_throughput": 17.2456795,
+    "combined": 17.55544225,
+    "runs": 2
+  }
+]

@@ -92,8 +92,9 @@ def _compile_and_test(candidate_program_path: str, make_env: Optional[Dict[str, 
     return artifacts
 
 
-def _restore_original(restore_info: Dict[str, Any]) -> None:
+def _restore_original(artifacts: Dict[str, Any]) -> None:
     """Restore original files"""
+    restore_info = artifacts.get("restore_info", {})
     original_backup_path = restore_info.get("original_backup_path")
     temp_candidate_path = restore_info.get("temp_candidate_path")
     
@@ -237,17 +238,17 @@ def evaluate(program_path: str) -> EvaluationResult:
     metrics = {}
     
     # Step 1: Test candidate compilation and basic functionality first
-    print("[DEBUG] Step 1: Testing candidate compilation and basic functionality...")
+    print("[DEBUG] Step 1: Compiling CANDIDATE and running tests...")
     try:
         cand_artifacts = _compile_and_test(program_path, make_env)
-        print("[DEBUG] Candidate compilation and tests passed!")
+        print("[DEBUG] ✓ Candidate compiled successfully and passed tests!")
         
     except Exception as e:
-        print(f"[DEBUG] Candidate failed early (compilation/tests): {e}")
+        print(f"[DEBUG] ✗ Candidate failed early (compilation/tests): {e}")
         return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate failed early: {e}"})
     
     # Step 2: Run candidate benchmark
-    print("[DEBUG] Step 2: Running candidate benchmark...")
+    print("[DEBUG] Step 2: Running CANDIDATE benchmark (ycsb binary contains candidate code)...")
     try:
         candidate_result = _run_benchmark(dataset_dir, workload, threads, f"{output_file}.candidate")
         
@@ -268,14 +269,16 @@ def evaluate(program_path: str) -> EvaluationResult:
         return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate benchmark failed: {e}"})
     
     # Step 3: Only now run baseline (candidate passed all tests)
-    print("[DEBUG] Step 3: Running baseline (candidate passed, now comparing)...")
+    print("[DEBUG] Step 3: Restoring ORIGINAL bskip.h and running BASELINE...")
     try:
         # Restore original for baseline
         _restore_original(cand_artifacts)
+        print("[DEBUG] ✓ Original bskip.h restored")
         
         # Ensure we start with clean baseline
         subprocess.run(["make", "clean"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
         _compile_baseline(make_env)
+        print("[DEBUG] ✓ Baseline compiled (ycsb binary now contains original code)")
         baseline_result = _run_benchmark(dataset_dir, workload, threads, f"{output_file}.baseline")
         
         if baseline_result["run"]["rc"] != 0:

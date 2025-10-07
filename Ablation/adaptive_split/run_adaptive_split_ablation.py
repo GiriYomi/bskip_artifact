@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Ablation experiment to test the performance impact of only the binary search optimization.
+Ablation experiment to test the performance impact of Adaptive Node Splitting optimization.
 This script compares:
-1. Original bskip_binary.h (with all original features)
-2. bskip_binary_ablation.h (with only the optimized binary search)
-3. Best program (with all optimizations removed except binary search)
+1. Baseline (bskip without adaptive split)
+2. Adaptive Split Only (bskip with only adaptive split optimization)
+3. Best Program (bskip with all optimizations including adaptive split, hints, binary search, etc.)
 """
 
 import subprocess
@@ -45,7 +45,7 @@ def run_benchmark(bskip_file, description, num_runs=3):
             print(f"Run {i+1}/{num_runs}...")
             
             # Run YCSB benchmark
-            cmd = ["./ycsb", "/home/yomi/0Projects/skip_data/uniform/", "a", "32", f"results/ablation_run_{i}.txt"]
+            cmd = ["./ycsb", "/home/yomi/0Projects/skip_data/uniform/", "a", "32", f"results/ablation_adaptive_run_{i}.txt"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             
             if result.returncode != 0:
@@ -115,8 +115,8 @@ def run_benchmark(bskip_file, description, num_runs=3):
             subprocess.run(["rm", "bskip.h.backup"], check=True)
 
 def main():
-    print("B-Skiplist Ablation Experiment")
-    print("Testing the performance impact of binary search optimization")
+    print("B-Skiplist Adaptive Split Ablation Experiment")
+    print("Testing the performance impact of adaptive node splitting optimization")
     
     # Change to bskiplist directory
     os.chdir("/home/yomi/0Projects/bskip_artifact/bskiplist")
@@ -124,12 +124,12 @@ def main():
     # Define test cases
     test_cases = [
         {
-            'file': '../Ablation/binary_search/bskip_baseline_linear.h',
-            'description': 'Baseline (Linear search within nodes, BINARY_SEARCH=0)'
+            'file': '../Ablation/adaptive_split/bskip_baseline_no_adaptive.h',
+            'description': 'Baseline (Original without adaptive split)'
         },
         {
-            'file': '../Ablation/binary_search/bskip_with_binary_search.h', 
-            'description': 'Binary Search Only (BINARY_SEARCH=1)'
+            'file': '../Ablation/adaptive_split/bskip_with_adaptive.h', 
+            'description': 'Adaptive Split Only (Original with adaptive split)'
         },
         {
             'file': '../openevolve_output/best/best_program.h',
@@ -154,27 +154,27 @@ def main():
     # Print comparison
     if len(results) >= 2:
         print(f"\n{'='*80}")
-        print("ABLATION EXPERIMENT RESULTS")
+        print("ADAPTIVE SPLIT ABLATION EXPERIMENT RESULTS")
         print(f"{'='*80}")
         
-        baseline = results[0]  # Original
-        ablation = results[1] if len(results) > 1 else None
+        baseline = results[0]  # Baseline without adaptive split
+        adaptive = results[1] if len(results) > 1 else None
         best = results[2] if len(results) > 2 else None
         
-        print(f"\nBaseline (Linear Search):")
+        print(f"\nBaseline (No Adaptive Split):")
         print(f"  Load: {baseline['load_throughput']:.2f} ops/us")
         print(f"  Run: {baseline['run_throughput']:.2f} ops/us")
         print(f"  Combined: {baseline['combined']:.2f} ops/us")
         
-        if ablation:
-            load_speedup = (ablation['load_throughput'] / baseline['load_throughput'] - 1) * 100
-            run_speedup = (ablation['run_throughput'] / baseline['run_throughput'] - 1) * 100
-            combined_speedup = (ablation['combined'] / baseline['combined'] - 1) * 100
+        if adaptive:
+            load_speedup = (adaptive['load_throughput'] / baseline['load_throughput'] - 1) * 100
+            run_speedup = (adaptive['run_throughput'] / baseline['run_throughput'] - 1) * 100
+            combined_speedup = (adaptive['combined'] / baseline['combined'] - 1) * 100
             
-            print(f"\nBinary Search Only:")
-            print(f"  Load: {ablation['load_throughput']:.2f} ops/us ({load_speedup:+.1f}%)")
-            print(f"  Run: {ablation['run_throughput']:.2f} ops/us ({run_speedup:+.1f}%)")
-            print(f"  Combined: {ablation['combined']:.2f} ops/us ({combined_speedup:+.1f}%)")
+            print(f"\nAdaptive Split Only:")
+            print(f"  Load: {adaptive['load_throughput']:.2f} ops/us ({load_speedup:+.1f}%)")
+            print(f"  Run: {adaptive['run_throughput']:.2f} ops/us ({run_speedup:+.1f}%)")
+            print(f"  Combined: {adaptive['combined']:.2f} ops/us ({combined_speedup:+.1f}%)")
         
         if best:
             load_speedup = (best['load_throughput'] / baseline['load_throughput'] - 1) * 100
@@ -186,19 +186,19 @@ def main():
             print(f"  Run: {best['run_throughput']:.2f} ops/us ({run_speedup:+.1f}%)")
             print(f"  Combined: {best['combined']:.2f} ops/us ({combined_speedup:+.1f}%)")
         
-        if ablation and best:
-            # Calculate how much of the total improvement comes from binary search
-            binary_improvement = ablation['combined'] - baseline['combined']
+        if adaptive and best:
+            # Calculate how much of the total improvement comes from adaptive split
+            adaptive_improvement = adaptive['combined'] - baseline['combined']
             total_improvement = best['combined'] - baseline['combined']
             if total_improvement > 0:
-                binary_contribution = (binary_improvement / total_improvement) * 100
-                print(f"\nBinary Search Contribution Analysis:")
-                print(f"  Binary Search Improvement: {binary_improvement:.2f} ops/us")
+                adaptive_contribution = (adaptive_improvement / total_improvement) * 100
+                print(f"\nAdaptive Split Contribution Analysis:")
+                print(f"  Adaptive Split Improvement: {adaptive_improvement:.2f} ops/us")
                 print(f"  Total Improvement (Best vs Baseline): {total_improvement:.2f} ops/us")
-                print(f"  Binary Search accounts for: {binary_contribution:.1f}% of total improvement")
+                print(f"  Adaptive Split accounts for: {adaptive_contribution:.1f}% of total improvement")
         
         # Save results
-        output_file = "../Ablation/binary_search/binary_search_ablation_results.json"
+        output_file = "../Ablation/adaptive_split/adaptive_split_ablation_results.json"
         with open(output_file, "w") as f:
             json.dump(results, f, indent=2)
         
@@ -209,3 +209,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

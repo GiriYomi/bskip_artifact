@@ -4,4 +4,5 @@ range
 *.csv
 
 openevolve_output/
+**/openevolve_output*/
 

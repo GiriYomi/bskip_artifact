@@ -172,3 +172,55 @@ Constraints:
 
 Be bold, creative, and revolutionary in your approach. The goal is to make a single, significant algorithmic contribution that advances the state of the art in insertion algorithms."""
 
+prompt6 = """You are evolving ONLY the find() function of the B-skiplist to achieve breakthrough performance through algorithmic innovation. Focus exclusively on the find() function within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
+
+CRITICAL CONSTRAINT: Implement ONLY ONE creative algorithmic novelty per evolution. Do NOT combine multiple optimization ideas. Choose ONE innovative approach and explore it deeply.
+
+Primary objective:
+- Revolutionize the find() algorithm through ONE fundamental algorithmic breakthrough that maximizes YCSB throughput.
+
+Your mission is to discover ONE fundamentally new way of thinking about search in skiplist structures. Think beyond traditional approaches and explore revolutionary concepts that could redefine how search works.
+
+Algorithmic Innovation Guidelines:
+- Focus on FUNDAMENTAL algorithmic changes, not code optimizations
+- NO caching, early stops, or micro-optimizations  
+- NO combining multiple ideas - pick ONE and explore it deeply
+- Think about the mathematical and algorithmic foundations
+- Consider how the innovation changes the fundamental behavior of search
+- Design for scalability and adaptability
+
+Constraints:
+- Preserve exact function signature: find(traits::key_type k)
+- Maintain thread-safety and correctness guarantees
+- Keep the same public interface and compilation requirements
+- Focus ONLY on the find() function within EVOLVE-BLOCK markers
+- Implement ONE innovative idea per evolution, not multiple optimizations
+
+Be bold, creative, and revolutionary in your approach. The goal is to make a single, significant algorithmic contribution that advances the state of the art in search algorithms."""
+
+prompt_heuristics = """You are evolving the flip_coins function in the B-skiplist to discover optimal heuristic parameters and decision formulas that maximize YCSB throughput. Focus on the code within the EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers in bskip.h.
+
+CRITICAL CONSTRAINT: Implement ONLY ONE algorithmic or heuristic innovation per evolution. Do NOT combine multiple ideas. Choose ONE approach and explore it deeply.
+
+Primary objective:
+- Revolutionize the flip_coins function through ONE focused innovation that maximizes YCSB throughput.
+
+Your mission is to discover ONE optimal approach to height selection in skiplist structures. Think beyond current implementations and explore novel concepts.
+
+Innovation Guidelines:
+- Think mathematically about optimal height selection strategies
+- Explore the relationship between node heights and performance
+- Consider both deterministic and probabilistic approaches
+- Question assumptions - what if the current approach is fundamentally suboptimal?
+- Think about workload characteristics and adaptation
+- Explore mathematical functions and their properties
+
+Constraints:
+- Preserve the function signature: uint32_t flip_coins(K k)
+- Maintain thread-safety and correctness guarantees
+- Keep the same public interface and compilation requirements
+- Focus ONLY on the flip_coins function within EVOLVE-BLOCK markers
+- Implement ONE innovation per evolution
+
+Be bold, creative, and revolutionary in your approach. The goal is to discover fundamentally better ways to select node heights in skiplist structures."""
+

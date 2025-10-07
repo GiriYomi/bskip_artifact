@@ -831,7 +831,7 @@ private:
                     int level, traits::key_type max);
 };
 
-// EVOLVE-BLOCK-START
+
 
 template <typename traits>
 uint32_t BSkip<traits>::flip_coins(K k)
@@ -886,7 +886,7 @@ uint32_t BSkip<traits>::flip_coins(K k)
     return result;
 }
 
-// EVOLVE-BLOCK-END
+// EVOLVE-BLOCK-START
 
 template <typename traits>
 #if ENABLE_TRACE_TIMER
@@ -1300,17 +1300,8 @@ bool BSkip<traits>::insert(traits::element_type k)
                     curr_node->next = new_node;
                     new_node->level = level;
 
-                    // Adaptive split: bias the split so the side where the key will be
-                    // inserted gets a bit more space, reducing the likelihood of an
-                    // immediate future split on the same side.
+                    // Simple midpoint split (baseline - no adaptive splitting)
                     int split_index = curr_node->num_elts / 2;
-                    if ((int)rank < split_index) {
-                        // insertion on left side: shift split left a bit
-                        split_index = std::max(1, split_index - (int)(curr_node->num_elts/16 + 1));
-                    } else {
-                        // insertion on right side: shift split right a bit
-                        split_index = std::min((int)curr_node->num_elts - 1, split_index + (int)(curr_node->num_elts/16 + 1));
-                    }
 
                     uint32_t elts_moved = curr_node->split_keys(new_node, split_index, 0);
                     curr_node->next_header = new_node->get_header();
@@ -1512,6 +1503,7 @@ bool BSkip<traits>::insert(traits::element_type k)
     return true;
 }
 
+// EVOLVE-BLOCK-END
 
 template <typename traits>
 BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
