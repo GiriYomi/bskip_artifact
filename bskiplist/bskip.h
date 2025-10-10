@@ -886,7 +886,7 @@ uint32_t BSkip<traits>::flip_coins(K k)
     return result;
 }
 
-// EVOLVE-BLOCK-END
+
 
 template <typename traits>
 #if ENABLE_TRACE_TIMER
@@ -1684,7 +1684,7 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
     return NULL;
 }
 
-
+// EVOLVE-BLOCK-END
 
 
 template <typename traits>
