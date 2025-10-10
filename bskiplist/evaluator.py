@@ -6,6 +6,7 @@ import tempfile
 from typing import Any, Dict, Optional
 import fcntl
 import time
+import json
 
 from openevolve.evaluation_result import EvaluationResult
 
@@ -13,6 +14,29 @@ from openevolve.evaluation_result import EvaluationResult
 BSKIP_DIR = os.path.abspath(os.path.dirname(__file__))
 BSKIP_HEADER_PATH = os.path.join(BSKIP_DIR, "bskip.h")
 YSCSB_BIN_PATH = os.path.join(BSKIP_DIR, "ycsb")
+
+# Baseline statistics from benchmark run (20 runs, collected data)
+# These serve as the reference point for evaluating candidates
+BASELINE_STATS = {
+    "load": {
+        "mean": 17.891957,
+        "stdev": 0.664131,
+        "median": 17.649551,
+        "min": 16.925838,
+        "max": 19.184535
+    },
+    "run": {
+        "mean": 18.648723,
+        "stdev": 0.994040,
+        "median": 18.336922,
+        "min": 17.108713,
+        "max": 20.639950
+    }
+}
+
+# Significance threshold: candidate must exceed baseline mean + 1 std dev
+# to be considered a real improvement (not noise)
+SIGNIFICANCE_THRESHOLD_SIGMA = 1.0
 
 
 def _compile_and_test(candidate_program_path: str, make_env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -202,24 +226,67 @@ def _parse_throughput(stdout: str, prefix: str = "candidate") -> Dict[str, float
     return metrics
 
 
-def _compile_baseline(make_env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """Compile baseline (original) version"""
-    print("[DEBUG] Compiling baseline...")
+def _is_significant_improvement(candidate_value: float, baseline_mean: float, baseline_stdev: float) -> bool:
+    """Check if candidate value significantly exceeds baseline (mean + 1*sigma)"""
+    threshold = baseline_mean + (SIGNIFICANCE_THRESHOLD_SIGMA * baseline_stdev)
+    return candidate_value > threshold
+
+
+def _calculate_improvement_metrics(cand_load: float, cand_run: float) -> Dict[str, Any]:
+    """Calculate improvement metrics and check significance against baseline"""
     
-    clean_proc = subprocess.run(["make", "clean"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
-    build_proc = subprocess.run(["make", "-j"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
+    # Calculate raw improvements
+    base_load_mean = BASELINE_STATS["load"]["mean"]
+    base_load_stdev = BASELINE_STATS["load"]["stdev"]
+    base_run_mean = BASELINE_STATS["run"]["mean"]
+    base_run_stdev = BASELINE_STATS["run"]["stdev"]
     
-    if build_proc.returncode != 0:
-        raise RuntimeError("Baseline build failed")
-    if not os.path.exists(YSCSB_BIN_PATH):
-        raise FileNotFoundError("Built binary 'ycsb' not found for baseline")
+    # Calculate percentage improvements
+    load_improvement_pct = ((cand_load - base_load_mean) / base_load_mean * 100.0) if base_load_mean > 0 else 0.0
+    run_improvement_pct = ((cand_run - base_run_mean) / base_run_mean * 100.0) if base_run_mean > 0 else 0.0
     
-    return {"baseline_compiled": True}
+    # Check if improvements are statistically significant
+    load_is_significant = _is_significant_improvement(cand_load, base_load_mean, base_load_stdev)
+    run_is_significant = _is_significant_improvement(cand_run, base_run_mean, base_run_stdev)
+    
+    # Calculate thresholds for reference
+    load_threshold = base_load_mean + (SIGNIFICANCE_THRESHOLD_SIGMA * base_load_stdev)
+    run_threshold = base_run_mean + (SIGNIFICANCE_THRESHOLD_SIGMA * base_run_stdev)
+    
+    # Combined score: only positive if BOTH metrics show significant improvement
+    # This ensures we don't accept candidates that improve one metric while regressing another
+    if load_is_significant and run_is_significant:
+        combined_score = 0.5 * load_improvement_pct + 0.5 * run_improvement_pct
+    else:
+        # Penalize if not both significant
+        combined_score = min(load_improvement_pct, run_improvement_pct)
+    
+    return {
+        "load_improvement_pct": load_improvement_pct,
+        "run_improvement_pct": run_improvement_pct,
+        "combined_score": combined_score,
+        "load_is_significant": load_is_significant,
+        "run_is_significant": run_is_significant,
+        "load_threshold": load_threshold,
+        "run_threshold": run_threshold,
+        "baseline_load_mean": base_load_mean,
+        "baseline_load_stdev": base_load_stdev,
+        "baseline_run_mean": base_run_mean,
+        "baseline_run_stdev": base_run_stdev
+    }
 
 
 def evaluate(program_path: str) -> EvaluationResult:
-    """Optimized evaluator: test candidate first, then baseline only if candidate passes"""
+    """
+    New evaluation strategy:
+    1. Test candidate (compilation + correctness tests)
+    2. Run candidate benchmark TWICE for stability
+    3. Average the two runs
+    4. Compare against pre-collected baseline statistics
+    5. Require statistical significance (exceeds baseline mean + 1 std dev)
+    """
     print(f"[DEBUG] Evaluating program: {program_path}")
+    print(f"[DEBUG] Using pre-collected baseline: Load={BASELINE_STATS['load']['mean']:.3f}±{BASELINE_STATS['load']['stdev']:.3f}, Run={BASELINE_STATS['run']['mean']:.3f}±{BASELINE_STATS['run']['stdev']:.3f}")
     
     # Setup
     if os.path.exists('/home/yomi/0Projects/skip_data/uniform/'):
@@ -237,8 +304,8 @@ def evaluate(program_path: str) -> EvaluationResult:
     artifacts = {}
     metrics = {}
     
-    # Step 1: Test candidate compilation and basic functionality first
-    print("[DEBUG] Step 1: Compiling CANDIDATE and running tests...")
+    # Step 1: Test candidate compilation and basic functionality
+    print("[DEBUG] Step 1: Compiling CANDIDATE and running correctness tests...")
     try:
         cand_artifacts = _compile_and_test(program_path, make_env)
         print("[DEBUG] ✓ Candidate compiled successfully and passed tests!")
@@ -247,68 +314,90 @@ def evaluate(program_path: str) -> EvaluationResult:
         print(f"[DEBUG] ✗ Candidate failed early (compilation/tests): {e}")
         return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate failed early: {e}"})
     
-    # Step 2: Run candidate benchmark
-    print("[DEBUG] Step 2: Running CANDIDATE benchmark (ycsb binary contains candidate code)...")
+    # Step 2: Run candidate benchmark FIRST time
+    print("[DEBUG] Step 2: Running CANDIDATE benchmark (run 1/2)...")
     try:
-        candidate_result = _run_benchmark(dataset_dir, workload, threads, f"{output_file}.candidate")
+        candidate_result_1 = _run_benchmark(dataset_dir, workload, threads, f"{output_file}.candidate1")
         
-        if candidate_result["run"]["rc"] != 0:
-            print(f"[DEBUG] Candidate run failed with return code {candidate_result['run']['rc']}")
-            print(f"[DEBUG] Candidate stderr: {candidate_result['run']['stderr']}")
-            print(f"[DEBUG] Candidate stdout: {candidate_result['run']['stdout']}")
+        if candidate_result_1["run"]["rc"] != 0:
+            print(f"[DEBUG] Candidate run 1 failed with return code {candidate_result_1['run']['rc']}")
             _restore_original(cand_artifacts)
-            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate run failed with rc={candidate_result['run']['rc']}, stderr={candidate_result['run']['stderr']}"})
+            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate run 1 failed: {candidate_result_1['run']['stderr']}"})
         
-        candidate_metrics = _parse_throughput(candidate_result["run"]["stdout"], "candidate")
-        metrics.update(candidate_metrics)
-        print(f"[DEBUG] Candidate metrics: {candidate_metrics}")
+        candidate_metrics_1 = _parse_throughput(candidate_result_1["run"]["stdout"], "candidate1")
+        print(f"[DEBUG] Candidate run 1 metrics: {candidate_metrics_1}")
         
     except Exception as e:
-        print(f"[DEBUG] Candidate benchmark failed with exception: {e}")
+        print(f"[DEBUG] Candidate benchmark run 1 failed with exception: {e}")
         _restore_original(cand_artifacts)
-        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate benchmark failed: {e}"})
+        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate benchmark 1 failed: {e}"})
     
-    # Step 3: Only now run baseline (candidate passed all tests)
-    print("[DEBUG] Step 3: Restoring ORIGINAL bskip.h and running BASELINE...")
+    # Step 3: Run candidate benchmark SECOND time (for stability)
+    print("[DEBUG] Step 3: Running CANDIDATE benchmark (run 2/2)...")
     try:
-        # Restore original for baseline
-        _restore_original(cand_artifacts)
-        print("[DEBUG] ✓ Original bskip.h restored")
+        candidate_result_2 = _run_benchmark(dataset_dir, workload, threads, f"{output_file}.candidate2")
         
-        # Ensure we start with clean baseline
-        subprocess.run(["make", "clean"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
-        _compile_baseline(make_env)
-        print("[DEBUG] ✓ Baseline compiled (ycsb binary now contains original code)")
-        baseline_result = _run_benchmark(dataset_dir, workload, threads, f"{output_file}.baseline")
+        if candidate_result_2["run"]["rc"] != 0:
+            print(f"[DEBUG] Candidate run 2 failed with return code {candidate_result_2['run']['rc']}")
+            _restore_original(cand_artifacts)
+            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate run 2 failed: {candidate_result_2['run']['stderr']}"})
         
-        if baseline_result["run"]["rc"] != 0:
-            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": "Baseline run failed"})
-        
-        baseline_metrics = _parse_throughput(baseline_result["run"]["stdout"], "baseline")
-        metrics.update(baseline_metrics)
-        print(f"[DEBUG] Baseline metrics: {baseline_metrics}")
+        candidate_metrics_2 = _parse_throughput(candidate_result_2["run"]["stdout"], "candidate2")
+        print(f"[DEBUG] Candidate run 2 metrics: {candidate_metrics_2}")
         
     except Exception as e:
-        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Baseline failed: {e}"})
+        print(f"[DEBUG] Candidate benchmark run 2 failed with exception: {e}")
+        _restore_original(cand_artifacts)
+        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate benchmark 2 failed: {e}"})
     
-    # Step 4: Calculate speedup
-    print("[DEBUG] Step 4: Calculating speedup...")
-    base_load = metrics.get("baseline_median_load_ops_per_us", 0.0)
-    cand_load = metrics.get("candidate_median_load_ops_per_us", 0.0)
-    base_run = metrics.get("baseline_median_run_ops_per_us", 0.0)
-    cand_run = metrics.get("candidate_median_run_ops_per_us", 0.0)
+    # Restore original bskip.h
+    _restore_original(cand_artifacts)
     
-    load_speedup = ((cand_load - base_load) / base_load * 100.0) if base_load > 0 else 0.0
-    run_speedup = ((cand_run - base_run) / base_run * 100.0) if base_run > 0 else 0.0
-    combined_score = 0.5 * load_speedup + 0.5 * run_speedup
+    # Step 4: Average the two candidate runs for stable measurement
+    print("[DEBUG] Step 4: Averaging candidate runs for stability...")
+    cand1_load = candidate_metrics_1.get("candidate1_median_load_ops_per_us", 0.0)
+    cand2_load = candidate_metrics_2.get("candidate2_median_load_ops_per_us", 0.0)
+    cand1_run = candidate_metrics_1.get("candidate1_median_run_ops_per_us", 0.0)
+    cand2_run = candidate_metrics_2.get("candidate2_median_run_ops_per_us", 0.0)
     
+    # Average of two runs
+    avg_cand_load = (cand1_load + cand2_load) / 2.0
+    avg_cand_run = (cand1_run + cand2_run) / 2.0
+    
+    # Store individual and averaged metrics
     metrics.update({
-        "load_speedup": load_speedup,
-        "run_speedup": run_speedup,
-        "combined_score": combined_score
+        "candidate1_median_load_ops_per_us": cand1_load,
+        "candidate1_median_run_ops_per_us": cand1_run,
+        "candidate2_median_load_ops_per_us": cand2_load,
+        "candidate2_median_run_ops_per_us": cand2_run,
+        "candidate_avg_load_ops_per_us": avg_cand_load,
+        "candidate_avg_run_ops_per_us": avg_cand_run
     })
     
-    print(f"[DEBUG] Final metrics: load_speedup={load_speedup:.2f}%, run_speedup={run_speedup:.2f}%, combined={combined_score:.2f}%")
+    print(f"[DEBUG] Run 1: Load={cand1_load:.3f}, Run={cand1_run:.3f}")
+    print(f"[DEBUG] Run 2: Load={cand2_load:.3f}, Run={cand2_run:.3f}")
+    print(f"[DEBUG] Average: Load={avg_cand_load:.3f}, Run={avg_cand_run:.3f}")
+    
+    # Step 5: Compare against baseline and check significance
+    print("[DEBUG] Step 5: Comparing against baseline and checking statistical significance...")
+    improvement_metrics = _calculate_improvement_metrics(avg_cand_load, avg_cand_run)
+    metrics.update(improvement_metrics)
+    
+    # Print detailed comparison
+    print(f"[DEBUG] Baseline Load: {improvement_metrics['baseline_load_mean']:.3f} ± {improvement_metrics['baseline_load_stdev']:.3f} ops/us")
+    print(f"[DEBUG] Candidate Load: {avg_cand_load:.3f} ops/us (threshold: {improvement_metrics['load_threshold']:.3f})")
+    print(f"[DEBUG] Load improvement: {improvement_metrics['load_improvement_pct']:.2f}% - {'✓ SIGNIFICANT' if improvement_metrics['load_is_significant'] else '✗ NOT SIGNIFICANT'}")
+    
+    print(f"[DEBUG] Baseline Run: {improvement_metrics['baseline_run_mean']:.3f} ± {improvement_metrics['baseline_run_stdev']:.3f} ops/us")
+    print(f"[DEBUG] Candidate Run: {avg_cand_run:.3f} ops/us (threshold: {improvement_metrics['run_threshold']:.3f})")
+    print(f"[DEBUG] Run improvement: {improvement_metrics['run_improvement_pct']:.2f}% - {'✓ SIGNIFICANT' if improvement_metrics['run_is_significant'] else '✗ NOT SIGNIFICANT'}")
+    
+    print(f"[DEBUG] Combined score: {improvement_metrics['combined_score']:.2f}%")
+    
+    if improvement_metrics['load_is_significant'] and improvement_metrics['run_is_significant']:
+        print("[DEBUG] ✓✓ BOTH metrics show significant improvement!")
+    else:
+        print("[DEBUG] ✗ Not both metrics significant - likely noise or regression")
     
     return EvaluationResult(metrics=metrics, artifacts=artifacts)
 
