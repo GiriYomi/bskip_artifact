@@ -14,11 +14,17 @@ from pathlib import Path
 
 
 class YCSBBenchmark:
-    def __init__(self, num_runs=20, output_dir="ycsb_benchmark_results"):
+    def __init__(self, num_runs=20, output_dir="ycsb_benchmark_results", 
+                 dataset_dir="/mydata/skip_data/uniform/", workload="a", num_threads=32):
         self.num_runs = num_runs
         self.output_dir = Path(output_dir)
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.run_dir = self.output_dir / f"run_{self.timestamp}"
+        
+        # YCSB configuration
+        self.dataset_dir = dataset_dir
+        self.workload = workload
+        self.num_threads = num_threads
         
         # Create output directories
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -31,10 +37,75 @@ class YCSBBenchmark:
         self.all_load_samples = []  # All individual load samples from all runs
         self.all_run_samples = []   # All individual run samples from all runs
         
+    def check_dataset_files(self):
+        """Check if required dataset files exist"""
+        print("=" * 80)
+        print("Step 1: Checking dataset files...")
+        print("=" * 80)
+        
+        # Handle both absolute and relative paths
+        if Path(self.dataset_dir).is_absolute():
+            dataset_path = Path(self.dataset_dir)
+        else:
+            bskiplist_dir = Path(__file__).parent / "bskiplist"
+            dataset_path = bskiplist_dir / self.dataset_dir
+        
+        # Expected files based on workload
+        workload_files = {
+            'a': ('loada_unif_int.dat', 'txnsa_unif_int.dat'),
+            'b': ('loadb_unif_int.dat', 'txnsb_unif_int.dat'),
+            'c': ('loadc_unif_int.dat', 'txnsc_unif_int.dat'),
+            'd': ('loadd_unif_int.dat', 'txnsd_unif_int.dat'),
+            'e': ('loade_unif_int.dat', 'txnse_unif_int.dat'),
+            'x': ('loadx_unif_int.dat', 'txnsx_unif_int.dat'),
+            'y': ('loady_unif_int.dat', 'txnsy_unif_int.dat'),
+        }
+        
+        if self.workload not in workload_files:
+            print(f"✗ Invalid workload '{self.workload}'")
+            print(f"   Valid workloads: {', '.join(workload_files.keys())}")
+            return False
+        
+        load_file, txn_file = workload_files[self.workload]
+        load_path = dataset_path / load_file
+        txn_path = dataset_path / txn_file
+        
+        print(f"Dataset directory: {dataset_path}")
+        print(f"Workload: {self.workload}")
+        print(f"Checking for required files:")
+        
+        missing_files = []
+        if not load_path.exists():
+            print(f"  ✗ {load_file} - NOT FOUND")
+            missing_files.append(str(load_path))
+        else:
+            print(f"  ✓ {load_file} - Found")
+        
+        if not txn_path.exists():
+            print(f"  ✗ {txn_file} - NOT FOUND")
+            missing_files.append(str(txn_path))
+        else:
+            print(f"  ✓ {txn_file} - Found")
+        
+        if missing_files:
+            print(f"\n✗ Missing required dataset files!")
+            print(f"\nPlease ensure these files exist:")
+            for f in missing_files:
+                print(f"  - {f}")
+            print(f"\nHow to get YCSB datasets:")
+            print(f"  1. Download or generate YCSB workload files")
+            print(f"  2. Place them in the dataset directory")
+            print(f"  3. Or specify a different directory with --dataset-dir")
+            print(f"\nYou can also check if datasets exist elsewhere in the repository")
+            return False
+        
+        print("✓ All required dataset files found!")
+        return True
+    
     def compile_ycsb(self):
         """Compile YCSB using make"""
-        print("=" * 80)
-        print("Step 1: Compiling YCSB...")
+        print("\n" + "=" * 80)
+        print("Step 2: Compiling YCSB...")
         print("=" * 80)
         
         # Change to bskiplist directory
@@ -125,9 +196,21 @@ class YCSBBenchmark:
         bskiplist_dir = Path(__file__).parent / "bskiplist"
         ycsb_binary = bskiplist_dir / "ycsb"
         
+        # Output file for this run
+        output_file = f"run_{run_number:02d}_output.txt"
+        
+        # YCSB command: ./ycsb [dataset_dir] [workload] [threads] [output_file]
+        cmd = [
+            str(ycsb_binary),
+            self.dataset_dir,
+            self.workload,
+            str(self.num_threads),
+            output_file
+        ]
+        
         try:
             result = subprocess.run(
-                [str(ycsb_binary)],
+                cmd,
                 cwd=bskiplist_dir,
                 check=True,
                 capture_output=True,
@@ -181,7 +264,7 @@ class YCSBBenchmark:
     def run_all_benchmarks(self):
         """Run YCSB num_runs times"""
         print("\n" + "=" * 80)
-        print(f"Step 2: Running YCSB {self.num_runs} times")
+        print(f"Step 3: Running YCSB {self.num_runs} times")
         print("=" * 80)
         
         successful_runs = 0
@@ -260,7 +343,7 @@ class YCSBBenchmark:
     def generate_summary(self):
         """Generate and save summary statistics"""
         print("\n" + "=" * 80)
-        print("Step 3: Calculating Performance Statistics")
+        print("Step 4: Calculating Performance Statistics")
         print("=" * 80)
         
         # Calculate statistics for median values from each run
@@ -377,20 +460,28 @@ class YCSBBenchmark:
         print("=" * 80)
         print(f"Configuration:")
         print(f"  Number of runs: {self.num_runs}")
+        print(f"  Dataset directory: {self.dataset_dir}")
+        print(f"  Workload: {self.workload}")
+        print(f"  Threads: {self.num_threads}")
         print(f"  Output directory: {self.run_dir}")
         print("=" * 80 + "\n")
         
-        # Step 1: Compile
+        # Step 1: Check dataset files
+        if not self.check_dataset_files():
+            print("\n✗ Dataset check failed. Exiting.")
+            return False
+        
+        # Step 2: Compile
         if not self.compile_ycsb():
             print("\n✗ Compilation failed. Exiting.")
             return False
         
-        # Step 2: Run benchmarks
+        # Step 3: Run benchmarks
         if not self.run_all_benchmarks():
             print("\n✗ All benchmark runs failed. Exiting.")
             return False
         
-        # Step 3: Generate summary
+        # Step 4: Generate summary
         self.generate_summary()
         
         print("\n" + "=" * 80)
@@ -414,14 +505,26 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run 20 times (default)
+  # Run 20 times with default settings (workload 'a', 32 threads)
   python run_ycsb_benchmark.py
   
-  # Run 10 times
-  python run_ycsb_benchmark.py -n 10
+  # Run 10 times with workload 'c'
+  python run_ycsb_benchmark.py -n 10 -w c
   
-  # Custom output directory
-  python run_ycsb_benchmark.py -o my_results
+  # Use different dataset directory
+  python run_ycsb_benchmark.py -d /path/to/datasets/uniform/
+  
+  # Run with 64 threads instead of default 32
+  python run_ycsb_benchmark.py -t 64
+  
+  # Combine options: 5 runs, workload b, 16 threads
+  python run_ycsb_benchmark.py -n 5 -w b -t 16
+
+Required:
+  The dataset directory must contain files like:
+    - loada_unif_int.dat, txnsa_unif_int.dat (for workload 'a')
+    - loadb_unif_int.dat, txnsb_unif_int.dat (for workload 'b')
+    - etc.
         """
     )
     
@@ -439,6 +542,28 @@ Examples:
         help='Output directory for results (default: ycsb_benchmark_results)'
     )
     
+    parser.add_argument(
+        '-d', '--dataset-dir',
+        type=str,
+        default='/mydata/skip_data/uniform/',
+        help='Dataset directory path (default: /mydata/skip_data/uniform/)'
+    )
+    
+    parser.add_argument(
+        '-w', '--workload',
+        type=str,
+        default='a',
+        choices=['a', 'b', 'c', 'd', 'e', 'x', 'y'],
+        help='YCSB workload to run (default: a)'
+    )
+    
+    parser.add_argument(
+        '-t', '--threads',
+        type=int,
+        default=32,
+        help='Number of threads to use (default: 32)'
+    )
+    
     args = parser.parse_args()
     
     # Validate arguments
@@ -446,10 +571,17 @@ Examples:
         print("Error: Number of runs must be at least 1")
         return 1
     
+    if args.threads < 1:
+        print("Error: Number of threads must be at least 1")
+        return 1
+    
     # Run benchmark
     benchmark = YCSBBenchmark(
         num_runs=args.num_runs,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        dataset_dir=args.dataset_dir,
+        workload=args.workload,
+        num_threads=args.threads
     )
     
     success = benchmark.run()
