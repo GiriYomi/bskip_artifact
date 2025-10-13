@@ -37,7 +37,7 @@ async def main(prompt_num: int) -> None:
 
     # Configure OpenEvolve for the bskiplist C++ optimization task
     config = Config(
-        max_iterations=20,
+        max_iterations=30,
         checkpoint_interval=1,
         diff_based_evolution=True,
         max_code_length=300000,
