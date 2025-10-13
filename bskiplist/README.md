@@ -14,3 +14,6 @@ The througput or/and latency will be printed in the terminal
 
 
 ./ycsb /mydata/skip_data/uniform/ a 32 out.txt  # skip_data stays at /mydata
+
+
+cloudlab Image: urn:publicid:IDN+wisc.cloudlab.us+image+dirr-PG0:EvolveDataStructure:1
