@@ -26,7 +26,11 @@ def get_program_metrics(program_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def analyze_checkpoint(checkpoint_num: int, top_n: int = 10) -> Dict[str, Any]:
     """Analyze a checkpoint and return comprehensive statistics."""
-    base_dir = "/home/yomi/0Projects/bskip_artifact/bskiplist/openevolve_output"
+    # Auto-detect base directory
+    if os.path.exists('/home/yomi/0Projects/bskip_artifact'):
+        base_dir = "/home/yomi/0Projects/bskip_artifact/bskiplist/openevolve_output"
+    else:
+        base_dir = "/opt/bskip_artifact/bskiplist/openevolve_output"
     checkpoint_dir = os.path.join(base_dir, f"checkpoints/checkpoint_{checkpoint_num}")
     
     if not os.path.exists(checkpoint_dir):
@@ -210,7 +214,11 @@ def main():
             if args.output_dir:
                 output_dir = args.output_dir
             else:
-                base_dir = "/home/yomi/0Projects/bskip_artifact/bskiplist/openevolve_output"
+                # Auto-detect base directory
+                if os.path.exists('/home/yomi/0Projects/bskip_artifact'):
+                    base_dir = "/home/yomi/0Projects/bskip_artifact/bskiplist/openevolve_output"
+                else:
+                    base_dir = "/opt/bskip_artifact/bskiplist/openevolve_output"
                 output_dir = os.path.join(base_dir, f"checkpoints/checkpoint_{args.checkpoint}/ranked_programs")
             
             save_ranked_programs(stats, output_dir)

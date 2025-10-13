@@ -29,7 +29,11 @@ def main():
         
         # Save if requested
         if save:
-            base_dir = "/home/yomi/0Projects/bskip_artifact/bskiplist/openevolve_output"
+            # Auto-detect base directory
+            if os.path.exists('/home/yomi/0Projects/bskip_artifact'):
+                base_dir = "/home/yomi/0Projects/bskip_artifact/bskiplist/openevolve_output"
+            else:
+                base_dir = "/opt/bskip_artifact/bskiplist/openevolve_output"
             output_dir = os.path.join(base_dir, f"checkpoints/checkpoint_{checkpoint}/ranked_programs")
             save_ranked_programs(stats, output_dir)
         

@@ -99,7 +99,11 @@ def main():
         sys.exit(1)
     
     checkpoint_num = sys.argv[1]
-    base_dir = "/home/yomi/0Projects/bskip_artifact/bskiplist/openevolve_output"
+    # Auto-detect base directory
+    if os.path.exists('/home/yomi/0Projects/bskip_artifact'):
+        base_dir = "/home/yomi/0Projects/bskip_artifact/bskiplist/openevolve_output"
+    else:
+        base_dir = "/opt/bskip_artifact/bskiplist/openevolve_output"
     checkpoint_dir = os.path.join(base_dir, f"checkpoints/checkpoint_{checkpoint_num}")
     
     if not os.path.exists(checkpoint_dir):

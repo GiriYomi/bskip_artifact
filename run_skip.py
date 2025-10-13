@@ -23,7 +23,7 @@ async def main(prompt_num: int) -> None:
         print("Running in LOCAL environment (full dataset)")
     else:
         # Cloudlab environment
-        base_dir = '/mydata/bskip_artifact'
+        base_dir = '/opt/bskip_artifact'
         os.environ['BSKIP_DATASET_DIR'] = '/mydata/skip_data/uniform/'
         print("Running in CLOUDLAB environment")
 

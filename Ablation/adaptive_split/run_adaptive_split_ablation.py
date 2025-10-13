@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 # Configuration
-DATA_DIR = "/mydata/skip_data/uniform/"
+DATA_DIR = "/mydata/skip_data/uniform/"  # skip_data stays at /mydata
 WORKLOAD = "a"
 NUM_THREADS = 32
 

@@ -97,3 +97,5 @@ The best_program.h doesn't actually change BINARY_SEARCH - it keeps it at 0 (lin
 
 This experiment proves that the "obvious" optimization (binary search) is actually not beneficial.
 
+
+

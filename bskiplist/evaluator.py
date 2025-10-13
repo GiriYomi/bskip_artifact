@@ -225,7 +225,7 @@ def evaluate(program_path: str) -> EvaluationResult:
     if os.path.exists('/home/yomi/0Projects/skip_data/uniform/'):
         dataset_dir = "/home/yomi/0Projects/skip_data/uniform/"
     else:
-        dataset_dir = "/mydata/skip_data/uniform/"
+        dataset_dir = "/mydata/skip_data/uniform/"  # skip_data stays at /mydata
     
     workload = "a"
     threads = 32

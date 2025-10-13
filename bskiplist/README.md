@@ -13,4 +13,4 @@ Example command: `./ycsb /home/eddy/repo/ycsb/ a 16 out.txt`
 The througput or/and latency will be printed in the terminal
 
 
-./ycsb /mydata/skip_data/uniform/ a 32 out.txt
+./ycsb /mydata/skip_data/uniform/ a 32 out.txt  # skip_data stays at /mydata
