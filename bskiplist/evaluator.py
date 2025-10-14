@@ -7,8 +7,19 @@ from typing import Any, Dict, Optional
 import fcntl
 import time
 import json
+import signal
 
 from openevolve.evaluation_result import EvaluationResult
+
+
+class TimeoutError(Exception):
+    """Raised when evaluation times out"""
+    pass
+
+
+def timeout_handler(signum, frame):
+    """Signal handler for timeout"""
+    raise TimeoutError("Evaluation timed out")
 
 
 BSKIP_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -131,7 +142,7 @@ def _restore_original(artifacts: Dict[str, Any]) -> None:
 
 
 def _run_benchmark(dataset_dir: str, workload: str, threads: int, output_file: str) -> Dict[str, Any]:
-    """Run benchmark and return results"""
+    """Run benchmark and return results with proper timeout handling"""
     artifacts: Dict[str, Any] = {"run": {}}
     TIMEOUT_SECONDS = 580
     
@@ -144,52 +155,41 @@ def _run_benchmark(dataset_dir: str, workload: str, threads: int, output_file: s
     cmd = ["./ycsb", dataset_dir, workload, str(threads), output_file]
     print(f"[DEBUG] Running command: {' '.join(cmd)}")
     
-    # Run with output to console but also capture for parsing
-    proc = subprocess.Popen(cmd, cwd=BSKIP_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1, universal_newlines=True)
+    try:
+        # Use subprocess.run() with timeout for proper timeout handling
+        # This prevents the infinite loop issue with readline()
+        result = subprocess.run(
+            cmd,
+            cwd=BSKIP_DIR,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_SECONDS
+        )
+        
+        # Print output in real-time (or at least after completion)
+        if result.stdout:
+            print(result.stdout)
+        if result.stderr:
+            print(f"[STDERR] {result.stderr}")
+        
+        artifacts["run"]["rc"] = result.returncode
+        artifacts["run"]["stdout"] = result.stdout
+        artifacts["run"]["stderr"] = result.stderr
+        artifacts["run"]["cmd"] = " ".join(cmd)
+        
+    except subprocess.TimeoutExpired as e:
+        print(f"[WARNING] Benchmark timed out after {TIMEOUT_SECONDS}s")
+        artifacts["run"]["rc"] = 124
+        artifacts["run"]["stdout"] = e.stdout if e.stdout else ""
+        artifacts["run"]["stderr"] = f"Timeout after {TIMEOUT_SECONDS}s"
+        artifacts["run"]["cmd"] = " ".join(cmd)
     
-    stdout_lines = []
-    stderr_lines = []
-    start_time = time.time()
-    
-    # Stream output to console in real-time
-    while True:
-        # Check timeout first
-        if time.time() - start_time > TIMEOUT_SECONDS:
-            print(f"[WARNING] Benchmark timed out after {TIMEOUT_SECONDS}s. Terminating...")
-            try:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=4)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-            except Exception:
-                pass
-
-            artifacts["run"]["rc"] = 124
-            artifacts["run"]["stdout"] = "\n".join(stdout_lines)
-            artifacts["run"]["stderr"] = "timeout after {TIMEOUT_SECONDS}s"
-            artifacts["run"]["cmd"] = " ".join(cmd)
-            return artifacts
-
-        output = proc.stdout.readline()
-        if output == '' and proc.poll() is not None:
-            break
-        if output:
-            print(output.strip())
-            stdout_lines.append(output.strip())
-    
-    # Get any remaining stderr
-    stderr_output = proc.stderr.read()
-    if stderr_output:
-        print(f"[STDERR] {stderr_output.strip()}")
-        stderr_lines.append(stderr_output.strip())
-    
-    proc.wait()
-    
-    artifacts["run"]["rc"] = proc.returncode
-    artifacts["run"]["stdout"] = "\n".join(stdout_lines)
-    artifacts["run"]["stderr"] = "\n".join(stderr_lines)
-    artifacts["run"]["cmd"] = " ".join(cmd)
+    except Exception as e:
+        print(f"[ERROR] Benchmark failed with exception: {e}")
+        artifacts["run"]["rc"] = 1
+        artifacts["run"]["stdout"] = ""
+        artifacts["run"]["stderr"] = str(e)
+        artifacts["run"]["cmd"] = " ".join(cmd)
     
     return artifacts
 
@@ -276,8 +276,10 @@ def _calculate_improvement_metrics(cand_load: float, cand_run: float) -> Dict[st
     }
 
 
-def evaluate(program_path: str) -> EvaluationResult:
+def _evaluate_internal(program_path: str) -> EvaluationResult:
     """
+    Internal evaluation function (wrapped by evaluate() with timeout)
+    
     New evaluation strategy:
     1. Test candidate (compilation + correctness tests)
     2. Run candidate benchmark TWICE for stability
@@ -312,7 +314,7 @@ def evaluate(program_path: str) -> EvaluationResult:
         
     except Exception as e:
         print(f"[DEBUG] ✗ Candidate failed early (compilation/tests): {e}")
-        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate failed early: {e}"})
+        return EvaluationResult(metrics={"combined_score": -999}, artifacts={"error": f"Candidate failed early: {e}"})
     
     # Step 2: Run candidate benchmark FIRST time
     print("[DEBUG] Step 2: Running CANDIDATE benchmark (run 1/2)...")
@@ -322,7 +324,7 @@ def evaluate(program_path: str) -> EvaluationResult:
         if candidate_result_1["run"]["rc"] != 0:
             print(f"[DEBUG] Candidate run 1 failed with return code {candidate_result_1['run']['rc']}")
             _restore_original(cand_artifacts)
-            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate run 1 failed: {candidate_result_1['run']['stderr']}"})
+            return EvaluationResult(metrics={"combined_score": -999}, artifacts={"error": f"Candidate run 1 failed: {candidate_result_1['run']['stderr']}"})
         
         candidate_metrics_1 = _parse_throughput(candidate_result_1["run"]["stdout"], "candidate1")
         print(f"[DEBUG] Candidate run 1 metrics: {candidate_metrics_1}")
@@ -330,7 +332,7 @@ def evaluate(program_path: str) -> EvaluationResult:
     except Exception as e:
         print(f"[DEBUG] Candidate benchmark run 1 failed with exception: {e}")
         _restore_original(cand_artifacts)
-        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate benchmark 1 failed: {e}"})
+        return EvaluationResult(metrics={"combined_score": -999}, artifacts={"error": f"Candidate benchmark 1 failed: {e}"})
     
     # Step 3: Run candidate benchmark SECOND time (for stability)
     print("[DEBUG] Step 3: Running CANDIDATE benchmark (run 2/2)...")
@@ -340,7 +342,7 @@ def evaluate(program_path: str) -> EvaluationResult:
         if candidate_result_2["run"]["rc"] != 0:
             print(f"[DEBUG] Candidate run 2 failed with return code {candidate_result_2['run']['rc']}")
             _restore_original(cand_artifacts)
-            return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate run 2 failed: {candidate_result_2['run']['stderr']}"})
+            return EvaluationResult(metrics={"combined_score": -999}, artifacts={"error": f"Candidate run 2 failed: {candidate_result_2['run']['stderr']}"})
         
         candidate_metrics_2 = _parse_throughput(candidate_result_2["run"]["stdout"], "candidate2")
         print(f"[DEBUG] Candidate run 2 metrics: {candidate_metrics_2}")
@@ -348,7 +350,7 @@ def evaluate(program_path: str) -> EvaluationResult:
     except Exception as e:
         print(f"[DEBUG] Candidate benchmark run 2 failed with exception: {e}")
         _restore_original(cand_artifacts)
-        return EvaluationResult(metrics={"combined_score": 0.0}, artifacts={"error": f"Candidate benchmark 2 failed: {e}"})
+        return EvaluationResult(metrics={"combined_score": -999}, artifacts={"error": f"Candidate benchmark 2 failed: {e}"})
     
     # Restore original bskip.h
     _restore_original(cand_artifacts)
@@ -400,6 +402,46 @@ def evaluate(program_path: str) -> EvaluationResult:
         print("[DEBUG] ✗ Not both metrics significant - likely noise or regression")
     
     return EvaluationResult(metrics=metrics, artifacts=artifacts)
+
+
+def evaluate(program_path: str) -> EvaluationResult:
+    """
+    Main evaluate function with timeout protection.
+    
+    This wrapper ensures the evaluation respects OpenEvolve's timeout setting (600s).
+    It prevents infinite loops by using signal-based timeout.
+    """
+    # OpenEvolve sets evaluator timeout to 600 seconds
+    # Set our timeout slightly less (595s) to allow cleanup
+    EVALUATOR_TIMEOUT = 580
+    
+    # Set up signal-based timeout (Unix/Linux systems)
+    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(EVALUATOR_TIMEOUT)
+    
+    try:
+        result = _evaluate_internal(program_path)
+        signal.alarm(0)  # Cancel the alarm
+        signal.signal(signal.SIGALRM, old_handler)  # Restore old handler
+        return result
+        
+    except TimeoutError as e:
+        signal.alarm(0)  # Cancel the alarm
+        signal.signal(signal.SIGALRM, old_handler)  # Restore old handler
+        print(f"[ERROR] Evaluation timed out after {EVALUATOR_TIMEOUT}s")
+        return EvaluationResult(
+            metrics={"combined_score": -999},
+            artifacts={"error": f"Evaluation timeout after {EVALUATOR_TIMEOUT}s"}
+        )
+        
+    except Exception as e:
+        signal.alarm(0)  # Cancel the alarm
+        signal.signal(signal.SIGALRM, old_handler)  # Restore old handler
+        print(f"[ERROR] Evaluation failed with exception: {e}")
+        return EvaluationResult(
+            metrics={"combined_score": -999},
+            artifacts={"error": str(e)}
+        )
 
 
 def evaluate_stage1(program_path: str) -> EvaluationResult:
