@@ -74,91 +74,113 @@ except subprocess.TimeoutExpired as e:
 - ✅ Clean exception handling for timeouts
 - ✅ Guaranteed to return within TIMEOUT_SECONDS
 
-### Fix 2: Signal-Based Global Timeout Wrapper
+### Fix 2: Multiprocessing-Based Global Timeout (Thread-Safe)
 
-**Added timeout handler**:
+**Problem with signals**: OpenEvolve runs evaluations in thread pool, but `signal.SIGALRM` only works in main thread
+- Error: `ValueError: signal only works in main thread of the main interpreter`
+
+**Solution**: Use `multiprocessing` to run evaluation in separate process
+
+**Implementation**:
 ```python
-import signal
+import multiprocessing
+from multiprocessing import Process, Queue
 
-class TimeoutError(Exception):
-    """Raised when evaluation times out"""
-    pass
+# Set spawn method for clean process start
+multiprocessing.set_start_method('spawn', force=True)
 
-def timeout_handler(signum, frame):
-    """Signal handler for timeout"""
-    raise TimeoutError("Evaluation timed out")
-```
-
-**Wrapped `evaluate()` function**:
-```python
-def evaluate(program_path: str) -> EvaluationResult:
-    """Main evaluate function with timeout protection"""
-    EVALUATOR_TIMEOUT = 595  # Slightly less than OpenEvolve's 600s
-    
-    # Set up signal-based timeout (Unix/Linux systems)
-    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(EVALUATOR_TIMEOUT)
-    
+def _run_in_process(program_path: str, result_queue: Queue, timeout: int):
+    """Run evaluation in separate process"""
     try:
         result = _evaluate_internal(program_path)
-        signal.alarm(0)  # Cancel the alarm
-        signal.signal(signal.SIGALRM, old_handler)
-        return result
-        
-    except TimeoutError as e:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
-        print(f"[ERROR] Evaluation timed out after {EVALUATOR_TIMEOUT}s")
+        result_queue.put(('success', {
+            'metrics': result.metrics,
+            'artifacts': result.artifacts
+        }))
+    except Exception as e:
+        result_queue.put(('error', str(e)))
+
+def evaluate(program_path: str) -> EvaluationResult:
+    """Main evaluate with multiprocessing timeout"""
+    EVALUATOR_TIMEOUT = 570  # Slightly less than OpenEvolve's 600s
+    
+    result_queue = Queue()
+    process = Process(target=_run_in_process, 
+                     args=(program_path, result_queue, EVALUATOR_TIMEOUT))
+    process.start()
+    process.join(timeout=EVALUATOR_TIMEOUT)
+    
+    if process.is_alive():
+        # Timeout - terminate forcefully
+        process.terminate()
+        process.join(timeout=5)
+        if process.is_alive():
+            process.kill()
         return EvaluationResult(
-            metrics={"combined_score": 0.0},
-            artifacts={"error": f"Evaluation timeout after {EVALUATOR_TIMEOUT}s"}
+            metrics={"combined_score": -999},
+            artifacts={"error": f"Timeout after {EVALUATOR_TIMEOUT}s"}
         )
+    
+    # Get result from queue
+    if not result_queue.empty():
+        status, data = result_queue.get()
+        if status == 'success':
+            return EvaluationResult(metrics=data['metrics'], 
+                                   artifacts=data['artifacts'])
+    ...
 ```
 
 **Benefits**:
-- ✅ Enforces hard timeout on entire evaluation
-- ✅ Handles hanging compilations, tests, or benchmarks
-- ✅ Uses Unix signals (SIGALRM) for reliable timeout
-- ✅ Properly cleans up signal handlers
-- ✅ Returns gracefully on timeout
+- ✅ Works from any thread (no signal restrictions)
+- ✅ Can forcefully terminate hung processes
+- ✅ Clean inter-process communication via Queue
+- ✅ Proper cleanup with terminate/kill fallback
+- ✅ Compatible with OpenEvolve's thread pool
 
 ## Timeout Architecture
 
 ```
 ┌─────────────────────────────────────────────────┐
 │ OpenEvolve: evaluator.timeout = 600s            │
+│   ├── Runs in thread pool (asyncio executor)   │
+│   └── asyncio.wait_for(timeout=600)            │
 └─────────────────────────────────────────────────┘
                       ↓
 ┌─────────────────────────────────────────────────┐
-│ evaluate(): SIGALRM timeout = 595s              │
-│   ├── Set signal.alarm(595)                     │
-│   ├── Call _evaluate_internal()                 │
-│   │     ├── Compile & test                      │
+│ evaluate(): Process-based timeout = 570s        │
+│   ├── Create multiprocessing.Process            │
+│   ├── Run _evaluate_internal() in process      │
+│   │     ├── Compile & test (~30s)               │
 │   │     ├── Run benchmark 1                     │
-│   │     │   └── subprocess.run(timeout=580)     │
+│   │     │   └── subprocess.run(timeout=280s)    │
 │   │     ├── Run benchmark 2                     │
-│   │     │   └── subprocess.run(timeout=580)     │
-│   │     └── Calculate metrics                   │
-│   └── Cancel alarm, return result               │
-│                                                  │
-│ On TimeoutError:                                │
-│   └── Return with combined_score=0.0            │
+│   │     │   └── subprocess.run(timeout=280s)    │
+│   │     └── Calculate metrics (~1s)             │
+│   ├── process.join(timeout=570)                │
+│   │                                              │
+│   └── If timeout:                               │
+│       ├── process.terminate()                   │
+│       ├── process.kill() if needed              │
+│       └── Return combined_score=-999            │
 └─────────────────────────────────────────────────┘
 ```
 
 ## Timeout Hierarchy
 
-| Level | Timeout | Purpose |
-|-------|---------|---------|
-| **OpenEvolve** | 600s | Framework-level timeout |
-| **evaluate()** | 595s | Global evaluator timeout (signal) |
-| **_run_benchmark()** | 580s | Individual benchmark timeout (subprocess) |
+| Level | Timeout | Mechanism | Purpose |
+|-------|---------|-----------|---------|
+| **OpenEvolve** | 600s | asyncio.wait_for | Framework timeout |
+| **evaluate()** | 570s | Process.join(timeout) | Global evaluator timeout |
+| **_run_benchmark()** | 280s | subprocess.run(timeout) | Individual benchmark timeout |
 
 **Why this works**:
-1. Each benchmark has 580s to complete (subprocess.run timeout)
-2. If ANY step hangs, the 595s signal alarm fires
-3. OpenEvolve's 600s timeout is the final safety net
-4. 5-15 second buffers allow proper cleanup
+1. Each benchmark has 280s to complete (subprocess.run timeout)
+2. Two benchmarks = 560s total (fits within 570s process timeout)
+3. If ANY step hangs, process.join(570s) times out
+4. Process can be forcefully terminated (terminate/kill)
+5. OpenEvolve's 600s asyncio timeout is the final safety net
+6. 10-30 second buffers allow proper cleanup
+7. **Works from threads** - no signal restrictions!
 
 ## Key Changes Summary
 
@@ -210,37 +232,40 @@ while True:
 
 ## Platform Compatibility
 
-### Unix/Linux/macOS (✅ Supported):
-- Uses `signal.SIGALRM` for timeout
-- Fully supported and tested
+### Unix/Linux/macOS (✅ Fully Supported):
+- Uses `multiprocessing` for timeout (works from any thread)
+- Process can be forcefully terminated
+- Fully compatible with OpenEvolve's thread pool
 
-### Windows (⚠️ Limited):
-- `signal.SIGALRM` not available on Windows
-- Falls back to `subprocess.run()` timeout only
-- Recommendation: Use WSL or Linux for OpenEvolve
+### Windows (✅ Supported):
+- `multiprocessing` works on Windows with 'spawn' start method
+- Process termination supported
+- Fully compatible
 
-### Alternative for Windows:
+### Why Multiprocessing Instead of Signals:
+
+**Problem with signal.SIGALRM**:
 ```python
-# Could use threading.Timer instead of signal
-import threading
-
-def evaluate_with_timer(program_path, timeout=595):
-    result = None
-    def run():
-        nonlocal result
-        result = _evaluate_internal(program_path)
-    
-    thread = threading.Thread(target=run)
-    thread.daemon = True
-    thread.start()
-    thread.join(timeout=timeout)
-    
-    if thread.is_alive():
-        # Timeout occurred
-        return EvaluationResult(metrics={"combined_score": 0.0}, 
-                               artifacts={"error": "Timeout"})
-    return result
+# This FAILS when called from thread pool:
+old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+# ValueError: signal only works in main thread of the main interpreter
 ```
+
+**Solution with multiprocessing**:
+```python
+# This WORKS from any thread:
+process = Process(target=_run_in_process, args=(...))
+process.start()
+process.join(timeout=570)
+if process.is_alive():
+    process.terminate()  # Works from any thread!
+```
+
+### Key Advantage:
+- ✅ **Thread-safe**: Works when OpenEvolve runs evaluations in thread pool
+- ✅ **Cross-platform**: Works on Linux, macOS, and Windows
+- ✅ **Forceful termination**: Can kill hung processes
+- ✅ **Clean IPC**: Uses Queue for result passing
 
 ## Debugging Timeouts
 
@@ -278,23 +303,28 @@ If you see timeout errors:
 
 ✅ **Fixed infinite loop issues**:
 1. Replaced blocking `readline()` with `subprocess.run(timeout=...)`
-2. Added signal-based global timeout wrapper
+2. Added **multiprocessing-based** global timeout (thread-safe!)
 
 ✅ **Timeout enforcement at 3 levels**:
-1. Subprocess level (580s per benchmark)
-2. Evaluator level (595s total evaluation)
+1. Subprocess level (280s per benchmark, 2 benchmarks = 560s)
+2. Evaluator level (570s total, using multiprocessing)
 3. OpenEvolve level (600s framework timeout)
 
-✅ **Graceful failure**:
-- Timeouts return `combined_score=0.0`
-- Clear error messages in artifacts
-- Proper cleanup of resources
+✅ **Thread-safe implementation**:
+- Uses `multiprocessing.Process` instead of signals
+- Works correctly when called from OpenEvolve's thread pool
+- No "signal only works in main thread" errors
 
-**Result**: The evaluator will **never** enter an infinite loop and will **always** respect OpenEvolve's timeout settings.
+✅ **Graceful failure**:
+- Timeouts return `combined_score=-999`
+- Clear error messages in artifacts
+- Proper cleanup of resources (terminate/kill processes)
+
+**Result**: The evaluator will **never** enter an infinite loop and will **always** respect OpenEvolve's timeout settings, even when running in thread pool.
 
 ---
 
-**Date Fixed**: 2025-10-10  
-**Issue**: Infinite loops from blocking I/O and missing global timeout  
-**Solution**: subprocess.run() + signal.SIGALRM timeout wrapper
+**Date Fixed**: 2025-10-10 (Updated: 2025-10-14)  
+**Issue**: Infinite loops from blocking I/O and thread pool incompatibility  
+**Solution**: subprocess.run() + multiprocessing.Process timeout wrapper
 

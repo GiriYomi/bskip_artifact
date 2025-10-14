@@ -7,19 +7,18 @@ from typing import Any, Dict, Optional
 import fcntl
 import time
 import json
-import signal
+import multiprocessing
+from multiprocessing import Process, Queue
 
 from openevolve.evaluation_result import EvaluationResult
 
-
-class TimeoutError(Exception):
-    """Raised when evaluation times out"""
+# Set multiprocessing start method to 'spawn' for compatibility
+# This ensures the process starts cleanly even when called from threads
+try:
+    multiprocessing.set_start_method('spawn', force=True)
+except RuntimeError:
+    # Already set, ignore
     pass
-
-
-def timeout_handler(signum, frame):
-    """Signal handler for timeout"""
-    raise TimeoutError("Evaluation timed out")
 
 
 BSKIP_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -144,7 +143,7 @@ def _restore_original(artifacts: Dict[str, Any]) -> None:
 def _run_benchmark(dataset_dir: str, workload: str, threads: int, output_file: str) -> Dict[str, Any]:
     """Run benchmark and return results with proper timeout handling"""
     artifacts: Dict[str, Any] = {"run": {}}
-    TIMEOUT_SECONDS = 580
+    TIMEOUT_SECONDS = 280  # Each benchmark gets 280s (two runs = 560s total)
     
     if not os.path.exists(YSCSB_BIN_PATH):
         artifacts["run"]["rc"] = 1
@@ -404,43 +403,81 @@ def _evaluate_internal(program_path: str) -> EvaluationResult:
     return EvaluationResult(metrics=metrics, artifacts=artifacts)
 
 
-def evaluate(program_path: str) -> EvaluationResult:
+def _run_in_process(program_path: str, result_queue: Queue, timeout: int):
     """
-    Main evaluate function with timeout protection.
-    
-    This wrapper ensures the evaluation respects OpenEvolve's timeout setting (600s).
-    It prevents infinite loops by using signal-based timeout.
+    Run evaluation in a separate process to enable proper timeout handling.
+    This works even when called from a thread (unlike signal-based timeout).
     """
-    # OpenEvolve sets evaluator timeout to 600 seconds
-    # Set our timeout slightly less (595s) to allow cleanup
-    EVALUATOR_TIMEOUT = 580
-    
-    # Set up signal-based timeout (Unix/Linux systems)
-    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(EVALUATOR_TIMEOUT)
-    
     try:
         result = _evaluate_internal(program_path)
-        signal.alarm(0)  # Cancel the alarm
-        signal.signal(signal.SIGALRM, old_handler)  # Restore old handler
-        return result
+        # Convert EvaluationResult to dict for queue (avoid pickling issues)
+        result_dict = {
+            'metrics': result.metrics,
+            'artifacts': result.artifacts
+        }
+        result_queue.put(('success', result_dict))
+    except Exception as e:
+        result_queue.put(('error', str(e)))
+
+
+def evaluate(program_path: str) -> EvaluationResult:
+    """
+    Main evaluate function with timeout protection using multiprocessing.
+    
+    Uses a separate process (not thread) to enable timeout even when called
+    from OpenEvolve's thread pool. This avoids the "signal only works in main
+    thread" error.
+    """
+    # OpenEvolve sets evaluator timeout to 600 seconds
+    # Set our timeout slightly less (580s) to allow cleanup
+    EVALUATOR_TIMEOUT = 570
+    
+    # Create a queue for inter-process communication
+    result_queue = Queue()
+    
+    # Run evaluation in separate process
+    process = Process(target=_run_in_process, 
+                     args=(program_path, result_queue, EVALUATOR_TIMEOUT))
+    process.start()
+    
+    # Wait for process to complete with timeout
+    process.join(timeout=EVALUATOR_TIMEOUT)
+    
+    if process.is_alive():
+        # Timeout occurred - terminate the process
+        print(f"[ERROR] Evaluation timed out after {EVALUATOR_TIMEOUT}s, terminating process")
+        process.terminate()
+        process.join(timeout=5)  # Give it 5 seconds to terminate gracefully
         
-    except TimeoutError as e:
-        signal.alarm(0)  # Cancel the alarm
-        signal.signal(signal.SIGALRM, old_handler)  # Restore old handler
-        print(f"[ERROR] Evaluation timed out after {EVALUATOR_TIMEOUT}s")
+        if process.is_alive():
+            # Force kill if still alive
+            process.kill()
+            process.join()
+        
         return EvaluationResult(
             metrics={"combined_score": -999},
             artifacts={"error": f"Evaluation timeout after {EVALUATOR_TIMEOUT}s"}
         )
+    
+    # Check if we got a result
+    if not result_queue.empty():
+        status, data = result_queue.get()
         
-    except Exception as e:
-        signal.alarm(0)  # Cancel the alarm
-        signal.signal(signal.SIGALRM, old_handler)  # Restore old handler
-        print(f"[ERROR] Evaluation failed with exception: {e}")
+        if status == 'success':
+            return EvaluationResult(metrics=data['metrics'], artifacts=data['artifacts'])
+        else:
+            # Error occurred in subprocess
+            print(f"[ERROR] Evaluation failed in subprocess: {data}")
+            return EvaluationResult(
+                metrics={"combined_score": -999},
+                artifacts={"error": data}
+            )
+    else:
+        # Process completed but no result (shouldn't happen)
+        print(f"[ERROR] Evaluation process completed without result")
         return EvaluationResult(
             metrics={"combined_score": -999},
-            artifacts={"error": str(e)}
+            artifacts={"error": "Process completed without returning result"}
         )
 
 
