@@ -7,18 +7,8 @@ from typing import Any, Dict, Optional
 import fcntl
 import time
 import json
-import multiprocessing
-from multiprocessing import Process, Queue
 
 from openevolve.evaluation_result import EvaluationResult
-
-# Set multiprocessing start method to 'spawn' for compatibility
-# This ensures the process starts cleanly even when called from threads
-try:
-    multiprocessing.set_start_method('spawn', force=True)
-except RuntimeError:
-    # Already set, ignore
-    pass
 
 
 BSKIP_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -82,9 +72,9 @@ def _compile_and_test(candidate_program_path: str, make_env: Optional[Dict[str, 
             # Direct .h file
             shutil.copy2(candidate_program_path, BSKIP_HEADER_PATH)
 
-        # Clean and build
-        clean_proc = subprocess.run(["make", "clean"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
-        build_proc = subprocess.run(["make", "-j"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
+        # Clean and build with timeout to prevent hangs
+        clean_proc = subprocess.run(["make", "clean"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env, timeout=30)
+        build_proc = subprocess.run(["make", "-j"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env, timeout=120)
 
         if build_proc.returncode != 0:
             print(f"[DEBUG] Build failed with return code {build_proc.returncode}")
@@ -95,8 +85,8 @@ def _compile_and_test(candidate_program_path: str, make_env: Optional[Dict[str, 
         if not os.path.exists(YSCSB_BIN_PATH):
             raise FileNotFoundError("Built binary 'ycsb' not found")
 
-        # Run correctness test
-        test_proc = subprocess.run(["make", "test"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env)
+        # Run correctness test with timeout
+        test_proc = subprocess.run(["make", "test"], cwd=BSKIP_DIR, capture_output=True, text=True, env=make_env, timeout=120)
         if test_proc.returncode != 0:
             print(f"[DEBUG] Test build failed with return code {test_proc.returncode}")
             print(f"[DEBUG] Test build stderr: {test_proc.stderr}")
@@ -105,7 +95,7 @@ def _compile_and_test(candidate_program_path: str, make_env: Optional[Dict[str, 
 
         test_bin_path = os.path.join(BSKIP_DIR, "test")
         if os.path.exists(test_bin_path):
-            test_run_proc = subprocess.run(["./test"], cwd=BSKIP_DIR, capture_output=True, text=True, timeout=60)
+            test_run_proc = subprocess.run(["./test"], cwd=BSKIP_DIR, capture_output=True, text=True, timeout=30)
             if test_run_proc.returncode != 0 or "success" not in test_run_proc.stdout:
                 print(f"[DEBUG] Correctness test failed with return code {test_run_proc.returncode}")
                 print(f"[DEBUG] Test stderr: {test_run_proc.stderr}")
@@ -403,81 +393,26 @@ def _evaluate_internal(program_path: str) -> EvaluationResult:
     return EvaluationResult(metrics=metrics, artifacts=artifacts)
 
 
-def _run_in_process(program_path: str, result_queue: Queue, timeout: int):
-    """
-    Run evaluation in a separate process to enable proper timeout handling.
-    This works even when called from a thread (unlike signal-based timeout).
-    """
-    try:
-        result = _evaluate_internal(program_path)
-        # Convert EvaluationResult to dict for queue (avoid pickling issues)
-        result_dict = {
-            'metrics': result.metrics,
-            'artifacts': result.artifacts
-        }
-        result_queue.put(('success', result_dict))
-    except Exception as e:
-        result_queue.put(('error', str(e)))
-
-
 def evaluate(program_path: str) -> EvaluationResult:
     """
-    Main evaluate function with timeout protection using multiprocessing.
+    Main evaluate function.
     
-    Uses a separate process (not thread) to enable timeout even when called
-    from OpenEvolve's thread pool. This avoids the "signal only works in main
-    thread" error.
+    OpenEvolve handles timeout at the framework level with asyncio.wait_for(timeout=600).
+    We rely on:
+    1. subprocess.run(timeout=...) for individual benchmark timeouts
+    2. OpenEvolve's asyncio.wait_for for overall evaluation timeout
+    
+    This approach avoids multiprocessing pickling issues while still preventing hangs.
     """
-    # OpenEvolve sets evaluator timeout to 600 seconds
-    # Set our timeout slightly less (580s) to allow cleanup
-    EVALUATOR_TIMEOUT = 570
-    
-    # Create a queue for inter-process communication
-    result_queue = Queue()
-    
-    # Run evaluation in separate process
-    process = Process(target=_run_in_process, 
-                     args=(program_path, result_queue, EVALUATOR_TIMEOUT))
-    process.start()
-    
-    # Wait for process to complete with timeout
-    process.join(timeout=EVALUATOR_TIMEOUT)
-    
-    if process.is_alive():
-        # Timeout occurred - terminate the process
-        print(f"[ERROR] Evaluation timed out after {EVALUATOR_TIMEOUT}s, terminating process")
-        process.terminate()
-        process.join(timeout=5)  # Give it 5 seconds to terminate gracefully
-        
-        if process.is_alive():
-            # Force kill if still alive
-            process.kill()
-            process.join()
-        
+    try:
+        return _evaluate_internal(program_path)
+    except Exception as e:
+        print(f"[ERROR] Evaluation failed with exception: {e}")
+        import traceback
+        traceback.print_exc()
         return EvaluationResult(
             metrics={"combined_score": -999},
-            artifacts={"error": f"Evaluation timeout after {EVALUATOR_TIMEOUT}s"}
-        )
-    
-    # Check if we got a result
-    if not result_queue.empty():
-        status, data = result_queue.get()
-        
-        if status == 'success':
-            return EvaluationResult(metrics=data['metrics'], artifacts=data['artifacts'])
-        else:
-            # Error occurred in subprocess
-            print(f"[ERROR] Evaluation failed in subprocess: {data}")
-            return EvaluationResult(
-                metrics={"combined_score": -999},
-                artifacts={"error": data}
-            )
-    else:
-        # Process completed but no result (shouldn't happen)
-        print(f"[ERROR] Evaluation process completed without result")
-        return EvaluationResult(
-            metrics={"combined_score": -999},
-            artifacts={"error": "Process completed without returning result"}
+            artifacts={"error": str(e)}
         )
 
 
