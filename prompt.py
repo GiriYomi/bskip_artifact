@@ -228,3 +228,132 @@ Constraints:
 
 Be bold, creative, and revolutionary in your approach. The goal is to discover fundamentally better ways to select node heights in skiplist structures."""
 
+prompt8 = """# B-Skiplist Concurrent Data Structure Optimization
+
+## THE PROBLEM
+You are optimizing a concurrent B-skiplist data structure implementation (bskip.h) to maximize throughput on the YCSB benchmark workload. The B-skiplist is a hybrid structure combining skiplist multi-level indexing with B-tree-like node consolidation for improved cache locality.
+
+**Current Performance Context:**
+- The baseline implementation already provides correct concurrent map semantics
+- The primary bottleneck is runtime performance under high-concurrency YCSB workloads
+- Target workload: mixed insert/lookup operations with uniform key distribution
+- Execution environment: Multi-core x86-64 with C++20 standard library
+
+**Your Goal:** Discover algorithmic innovations that fundamentally improve throughput while maintaining correctness.
+
+## EVALUATION CRITERIA
+
+**Primary Optimization Goal:**
+- Maximize combined throughput: (load phase operations/sec) + (run phase operations/sec)
+- Reported by YCSB benchmark after compilation and execution
+
+**Correctness Constraints (Non-Negotiable):**
+1. **Semantic Correctness:**
+   - insert(key, value): Must insert key-value pairs maintaining sorted order
+   - value(key): Must return the correct value for existing keys
+   - map_range(start, end, fn): Must apply fn to all keys in [start, end) in sorted order
+   - map_range_length(start, len, fn): Must apply fn to len consecutive keys starting from start
+
+2. **Concurrency Safety:**
+   - No data races, deadlocks, or undefined behavior under concurrent access
+   - Thread-safe operations without corrupting data structure state
+   - Linearizable semantics for all operations
+
+3. **Structural Invariants:**
+   - Maintain sorted order across all nodes and levels
+   - No duplicate keys, no lost insertions
+   - Range queries must be accurate and complete
+
+4. **Compilation Requirements:**
+   - Must compile with provided Makefile without errors
+   - No external dependencies beyond C++20 standard library
+   - Preserve all public function signatures and class/struct names
+
+**Performance Metrics:**
+- Solutions are ranked by total throughput (higher is better)
+- Compilation failures or correctness violations result in zero score
+- Focus on algorithmic improvements, not just micro-optimizations
+
+## CONTEXT AND APIS
+
+**Available C++ Features:**
+- C++20 standard library (std::atomic, std::memory_order, etc.)
+- Compiler intrinsics for lock-free operations (__atomic_*, __builtin_*)
+- Standard synchronization primitives (spinlocks, mutexes if needed)
+- SIMD intrinsics for x86-64 (if beneficial)
+
+**Code Structure:**
+- Evolve code within EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers
+- DO NOT change: public function signatures, class/struct names, included headers
+- You have complete freedom within evolution blocks to redesign algorithms
+
+**Data Structure Overview:**
+- Multi-level skiplist with B-tree-style nodes containing multiple keys
+- Nodes use array-based storage for cache efficiency
+- Lock-free or fine-grained locking for concurrent access
+- Probabilistic height assignment for level promotion
+
+## ALGORITHMIC INNOVATION DIRECTIONS
+
+**Focus Areas for Breakthrough Improvements:**
+
+1. **Concurrency Paradigms:**
+   - Lock-free/wait-free algorithms using CAS and versioned pointers
+   - Optimistic concurrency with validation
+   - Read-copy-update (RCU) or epoch-based memory reclamation
+   - Fine-grained locking with reduced contention
+   - Flat combining or elimination for hot spots
+
+2. **Search and Traversal:**
+   - Adaptive search paths that minimize node visits
+   - Predictive prefetching based on access patterns
+   - Novel level-skipping strategies
+   - Cache-conscious traversal algorithms
+
+3. **Node Management:**
+   - Adaptive node splitting/merging based on workload
+   - Workload-aware height selection (beyond random coin flips)
+   - Dynamic structure reorganization for hot keys
+   - Memory layout optimization for cache efficiency
+
+4. **Workload Adaptation:**
+   - Learn from access patterns to optimize structure
+   - Adaptive parameters (promotion probability, node sizes)
+   - Runtime tuning based on contention metrics
+   - Specialized fast paths for common cases
+
+**Innovation Philosophy:**
+- Seek fundamental algorithmic breakthroughs, not incremental tweaks
+- Question core assumptions about skiplist design
+- Explore unconventional approaches that could redefine the field
+- Balance novelty with practical performance gains
+
+**Guidance on Hints:**
+- Start with clean algorithmic innovations without over-constraining the approach
+- If stuck, consider: adaptive structures, workload-aware algorithms, novel concurrency patterns
+- Avoid combining too many ideas at once - focus on one core innovation per iteration
+- Think about what makes the current approach suboptimal for YCSB workloads
+
+## IMPLEMENTATION GUIDELINES
+
+1. **Code Quality:**
+   - Write clear, well-structured C++ with descriptive variable names
+   - Document algorithmic innovations with concise comments
+   - Maintain clear invariants and add assertions where appropriate
+   - Avoid overly complex code that obscures the core algorithm
+
+2. **Abstraction Level:**
+   - Focus on algorithmic design, not micro-optimizations
+   - Avoid relying on external libraries for algorithmic shortcuts
+   - Expose algorithmic innovation rather than just using library primitives
+   - Balance between novel algorithms and practical implementation
+
+3. **Evolution Strategy:**
+   - Implement ONE core algorithmic innovation per iteration
+   - Build incrementally on successful approaches
+   - Be willing to explore radically different paradigms
+   - Document the algorithmic insight behind each change
+
+**Success Criteria:** Deliver a solution that demonstrates measurable throughput improvement through novel algorithmic contributions while maintaining perfect correctness under concurrent execution.
+"""
+
