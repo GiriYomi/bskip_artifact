@@ -68,7 +68,7 @@ async def main(prompt_num: int) -> None:
             db_path=os.path.join(base_dir, 'bskiplist/openevolve_output'),
             population_size=75,
             archive_size=30,
-            num_islands=4,
+            num_islands=3,
             elite_selection_ratio=0.2,
             exploitation_ratio=0.6,
         ),
