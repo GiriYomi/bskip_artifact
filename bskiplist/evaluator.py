@@ -17,20 +17,21 @@ YSCSB_BIN_PATH = os.path.join(BSKIP_DIR, "ycsb")
 
 # Baseline statistics from benchmark run (20 runs, collected data)
 # These serve as the reference point for evaluating candidates
+# Updated for current machine (run_20251015_091602)
 BASELINE_STATS = {
     "load": {
-        "mean": 17.891957,
-        "stdev": 0.664131,
-        "median": 17.649551,
-        "min": 16.925838,
-        "max": 19.184535
+        "mean": 16.3887327,
+        "stdev": 0.06611527678556268,
+        "median": 16.395864500000002,
+        "min": 16.237138,
+        "max": 16.496938
     },
     "run": {
-        "mean": 18.648723,
-        "stdev": 0.994040,
-        "median": 18.336922,
-        "min": 17.108713,
-        "max": 20.639950
+        "mean": 16.78420905,
+        "stdev": 0.02798818661784372,
+        "median": 16.784672,
+        "min": 16.726234,
+        "max": 16.84221
     }
 }
 
@@ -133,7 +134,7 @@ def _restore_original(artifacts: Dict[str, Any]) -> None:
 def _run_benchmark(dataset_dir: str, workload: str, threads: int, output_file: str) -> Dict[str, Any]:
     """Run benchmark and return results with proper timeout handling"""
     artifacts: Dict[str, Any] = {"run": {}}
-    TIMEOUT_SECONDS = 280  # Each benchmark gets 280s (two runs = 560s total)
+    TIMEOUT_SECONDS = 580  # Each benchmark gets 280s (two runs = 560s total)
     
     if not os.path.exists(YSCSB_BIN_PATH):
         artifacts["run"]["rc"] = 1

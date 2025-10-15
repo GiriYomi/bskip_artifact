@@ -60,7 +60,7 @@ async def main(prompt_num: int) -> None:
 
         prompt=PromptConfig(
             system_message=selected_prompt,
-            num_top_programs=3,         # 拼 3 个性能最好的历史程序
+            num_top_programs=3,         
             num_diverse_programs=2,  
         ),
 
