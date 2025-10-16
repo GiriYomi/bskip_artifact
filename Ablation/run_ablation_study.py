@@ -192,6 +192,16 @@ class AblationStudy:
     def switch_to_version(self, version_file):
         """Switch bskip.h to a specific version"""
         target_file = self.bskiplist_dir / "bskip.h"
+        
+        # Resolve paths to handle symlinks and relative paths
+        version_file_resolved = Path(version_file).resolve()
+        target_file_resolved = target_file.resolve()
+        
+        # Skip copy if source and target are the same (e.g., baseline)
+        if version_file_resolved == target_file_resolved:
+            print(f"  (Already using this version, no copy needed)")
+            return
+        
         shutil.copy2(version_file, target_file)
     
     def compile_ycsb(self, version_id):
