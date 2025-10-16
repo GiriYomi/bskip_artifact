@@ -1,0 +1,47 @@
+{
+  "versions": {
+    "v1_binary_search": {
+      "name": "Binary Search Only",
+      "description": "Original bskip.h + binary search enabled (BINARY_SEARCH=1)",
+      "changes": [
+        "Enable binary search in leaf nodes"
+      ]
+    },
+    "v2_exponential_search": {
+      "name": "Exponential Search",
+      "description": "Original bskip.h + exponential+binary search in find_rank_in_node",
+      "changes": [
+        "Exponential search followed by binary search",
+        "Optimized for large nodes"
+      ]
+    },
+    "v3_thread_hints": {
+      "name": "Thread-Local Hints",
+      "description": "Original bskip.h + thread-local per-level hints",
+      "changes": [
+        "Thread-local hints for faster traversal",
+        "Optimistic caching of recently accessed nodes"
+      ]
+    },
+    "v4_bitops_flipcoins": {
+      "name": "Bitops in flip_coins",
+      "description": "Original bskip.h + bit operations optimization in flip_coins",
+      "changes": [
+        "Use bit operations when p is power-of-two",
+        "Avoid expensive division/modulus"
+      ]
+    },
+    "v5_adaptive_split": {
+      "name": "Adaptive Split + Other Micro-opts",
+      "description": "Original bskip.h + adaptive split strategy and other micro-optimizations",
+      "changes": [
+        "Adaptive split point selection",
+        "Direct array access for internal nodes",
+        "Improved map_range implementation"
+      ]
+    }
+  },
+  "created_at": "1760638859.3061056",
+  "base_file": "/Users/girigiri_yomi/Udel_Proj/bskip_artifact/bskiplist/bskip.h",
+  "evolved_file": "/Users/girigiri_yomi/Udel_Proj/bskip_artifact/openevolve_output_p8_iter100/best/best_program.h"
+}

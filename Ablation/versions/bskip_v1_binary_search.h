@@ -35,7 +35,7 @@
 #include "tools.h"
 
 // TODO: replace with SOA for vals
-#define BINARY_SEARCH 0
+#define BINARY_SEARCH 1
 
 template <typename traits>
 class BSkipNode;
