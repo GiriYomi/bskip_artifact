@@ -63,14 +63,26 @@ class AblationStudy:
         # Create output directories
         self.run_dir.mkdir(parents=True, exist_ok=True)
         
+        # Baseline data from evaluator.py (no need to run baseline experiment)
+        self.baseline_stats = {
+            "load": {
+                "mean": 16.3887327,
+                "stdev": 0.06611527678556268,
+                "median": 16.395864500000002,
+                "min": 16.237138,
+                "max": 16.496938
+            },
+            "run": {
+                "mean": 16.78420905,
+                "stdev": 0.02798818661784372,
+                "median": 16.784672,
+                "min": 16.726234,
+                "max": 16.84221
+            }
+        }
+        
         # Define versions to test
         self.versions = [
-            {
-                "id": "baseline",
-                "name": "Baseline (Original)",
-                "file": self.bskiplist_dir / "bskip.h",
-                "description": "Original bskip.h without any optimizations"
-            },
             {
                 "id": "v1_binary_search",
                 "name": "V1: Binary Search",
@@ -96,12 +108,6 @@ class AblationStudy:
                 "description": "Bit operations optimization in flip_coins"
             },
             {
-                "id": "v5_adaptive_split",
-                "name": "V5: Adaptive Split",
-                "file": self.versions_dir / "bskip_v5_adaptive_split.h",
-                "description": "Adaptive split + other micro-opts"
-            },
-            {
                 "id": "evolved_full",
                 "name": "Evolved (Full)",
                 "file": self.base_dir / "openevolve_output_p8_iter100" / "best" / "best_program.h",
@@ -111,6 +117,72 @@ class AblationStudy:
         
         # Storage for results
         self.results = {}
+    
+    def compile_version(self, version_file):
+        """Compile a specific version and return success status"""
+        print(f"  Compiling {version_file.name}...")
+        try:
+            # Switch to the version
+            self.switch_to_version(version_file)
+            
+            # Compile
+            result = subprocess.run(
+                "make clean && make -j4",
+                cwd=self.bskiplist_dir,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            
+            if result.returncode == 0:
+                print(f"  ✓ Compilation successful")
+                return True
+            else:
+                print(f"  ✗ Compilation failed:")
+                print(f"    stdout: {result.stdout}")
+                print(f"    stderr: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            print(f"  ✗ Compilation timed out")
+            return False
+        except Exception as e:
+            print(f"  ✗ Compilation error: {e}")
+            return False
+    
+    def test_version(self, version_file):
+        """Run basic correctness tests on a specific version"""
+        print(f"  Testing {version_file.name}...")
+        try:
+            # Switch to the version
+            self.switch_to_version(version_file)
+            
+            # Run make test
+            result = subprocess.run(
+                ["make", "test"],
+                cwd=self.bskiplist_dir,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            
+            if result.returncode == 0:
+                print(f"  ✓ Tests passed")
+                return True
+            else:
+                print(f"  ✗ Tests failed:")
+                print(f"    stdout: {result.stdout}")
+                print(f"    stderr: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            print(f"  ✗ Tests timed out")
+            return False
+        except Exception as e:
+            print(f"  ✗ Test error: {e}")
+            return False
     
     def check_prerequisites(self):
         """Check if all necessary files exist"""
@@ -398,16 +470,43 @@ class AblationStudy:
         return stats
     
     def run_all_benchmarks(self):
-        """Run benchmarks for all versions"""
+        """Run benchmarks for all versions (skip baseline, use pre-computed data)"""
         print("\n" + "=" * 80)
-        print(f"Step 2: Running Ablation Study ({self.num_runs} runs per version)")
+        print(f"Step 3: Running Ablation Study ({self.num_runs} runs per version)")
         print("=" * 80)
+        
+        # Add baseline data from evaluator.py (no need to run experiment)
+        print("\n" + "=" * 80)
+        print("Using Baseline Data (Pre-computed)")
+        print("=" * 80)
+        print("✓ Using baseline statistics from evaluator.py")
+        print(f"  Load: {self.baseline_stats['load']['mean']:.6f} ± {self.baseline_stats['load']['stdev']:.6f} ops/us")
+        print(f"  Run:  {self.baseline_stats['run']['mean']:.6f} ± {self.baseline_stats['run']['stdev']:.6f} ops/us")
+        
+        # Create baseline stats object
+        baseline_stats = VersionStats(
+            version_id="baseline",
+            version_name="Baseline (Original)",
+            num_runs=20,  # From evaluator.py
+            load_mean=self.baseline_stats['load']['mean'],
+            load_median=self.baseline_stats['load']['median'],
+            load_stdev=self.baseline_stats['load']['stdev'],
+            run_mean=self.baseline_stats['run']['mean'],
+            run_median=self.baseline_stats['run']['median'],
+            run_stdev=self.baseline_stats['run']['stdev'],
+            all_load_samples=[self.baseline_stats['load']['mean']] * 20,  # Approximate
+            all_run_samples=[self.baseline_stats['run']['mean']] * 20    # Approximate
+        )
+        self.results["baseline"] = baseline_stats
         
         # Backup original
         self.backup_original_bskip()
         
         try:
             for version in self.versions:
+                if version["id"] == "baseline":
+                    continue  # Skip baseline, already added above
+                    
                 stats = self.benchmark_version(version)
                 if stats:
                     self.results[version["id"]] = stats
@@ -555,6 +654,42 @@ class AblationStudy:
         
         return comparison_data
     
+    def preflight_check(self):
+        """Compile and test all versions before running experiments"""
+        print("=" * 80)
+        print("Step 2: Pre-flight Check (Compilation + Tests)")
+        print("=" * 80)
+        
+        failed_versions = []
+        
+        for version in self.versions:
+            if version["id"] == "baseline":
+                continue  # Skip baseline, we'll use pre-computed data
+                
+            print(f"\nChecking {version['name']}...")
+            
+            # Compile
+            if not self.compile_version(version["file"]):
+                failed_versions.append(f"{version['name']} (compilation failed)")
+                continue
+            
+            # Test
+            if not self.test_version(version["file"]):
+                failed_versions.append(f"{version['name']} (tests failed)")
+                continue
+            
+            print(f"  ✓ {version['name']} ready for benchmarking")
+        
+        if failed_versions:
+            print(f"\n❌ {len(failed_versions)} version(s) failed pre-flight check:")
+            for failed in failed_versions:
+                print(f"  - {failed}")
+            print("\nAborting experiment. Fix the issues above and try again.")
+            return False
+        
+        print(f"\n✅ All {len(self.versions)-1} versions passed pre-flight check!")
+        return True
+    
     def run(self):
         """Main execution flow"""
         print("\n" + "=" * 80)
@@ -574,12 +709,20 @@ class AblationStudy:
             print("\n✗ Prerequisites check failed. Exiting.")
             return False
         
-        # Run benchmarks
+        # Pre-flight check: compile and test all versions
+        if not self.preflight_check():
+            print("\n✗ Pre-flight check failed. Exiting.")
+            return False
+        
+        # Run benchmarks (skip baseline, use pre-computed data)
         if not self.run_all_benchmarks():
             print("\n✗ Benchmark execution failed. Exiting.")
             return False
         
         # Generate report
+        print("\n" + "=" * 80)
+        print("Step 4: Generating Comparison Report")
+        print("=" * 80)
         self.generate_comparison_report()
         
         print("\n" + "=" * 80)

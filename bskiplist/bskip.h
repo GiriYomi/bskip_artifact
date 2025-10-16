@@ -35,7 +35,7 @@
 #include "tools.h"
 
 // TODO: replace with SOA for vals
-#define BINARY_SEARCH 0
+#define BINARY_SEARCH 1
 
 template <typename traits>
 class BSkipNode;
@@ -360,45 +360,48 @@ private:
         return n - 1;
     }
 
-    // TODO: add binary search
+    // Improved binary search: find largest index i such that key[i] <= k.
+    // Implementation uses an upper_bound-style binary search (first index > k),
+    // then returns index-1. This version minimizes blind_read_key calls by
+    // caching the mid element per iteration.
     uint32_t find_index_binary(K k)
     {
+        uint32_t n = BSkipNode<traits>::num_elts;
+        if (n == 0) return 0;
+
+        // Search range is [0, n): find first index > k
         uint32_t left = 0;
-        uint32_t right = BSkipNode<traits>::num_elts - 1;
-        while (left <= right)
+        uint32_t right = n;
+        while (left < right)
         {
-            int mid = left + (right - left) / 2;
-            if (blind_read_key(mid) == k)
-            { // (keys[mid] == k) {
-                left = mid;
-                break;
-            }
-            else if (blind_read_key(mid) < k)
-            { // (keys[mid] < k) {
+            uint32_t mid = left + (right - left) / 2;
+            K midk = blind_read_key(mid);
+            if (midk <= k)
+            {
                 left = mid + 1;
             }
             else
             {
-                if (mid == 0)
-                {
-                    break;
-                }
-                right = mid - 1;
+                right = mid;
             }
         }
-        if (left == BSkipNode<traits>::num_elts || blind_read_key(left) > k)
+
+        // left is index of first element > k. Largest <= k is left-1.
+        if (left == 0)
         {
-            assert(left > 0);
-            left--;
+            // All elements > k; return 0 as conservative result (callers expect a valid rank).
+            return 0;
         }
 
+        uint32_t idx = left - 1;
+
 #if DEBUG
-        tbassert(left < BSkipNode<traits>::num_elts, "left = %u, num elts %u\n",
-                 left, BSkipNode<traits>::num_elts);
-        tbassert(left == find_index_linear(k), "k %lu, binary = %u, linear = %u\n",
-                 k, left, find_index_linear(k));
+        tbassert(idx < BSkipNode<traits>::num_elts, "idx = %u, num elts %u\n",
+                 idx, BSkipNode<traits>::num_elts);
+        tbassert(idx == find_index_linear(k), "k %lu, binary = %u, linear = %u\n",
+                 k, idx, find_index_linear(k));
 #endif
-        return left;
+        return idx;
     }
 };
 
@@ -836,53 +839,46 @@ private:
 template <typename traits>
 uint32_t BSkip<traits>::flip_coins(K k)
 {
-    // Adaptive probabilistic height selection:
-    // Start with a deterministic hash-based baseline (like before),
-    // then bias the result slightly based on a lightweight thread-local
-    // hint about recent node densities. This lets the structure adapt
-    // to hot spots: if the recent leaf is very dense, promote a little
-    // more aggressively to reduce future contention/splits.
+    // Optimized deterministic promotion:
+    // Use bit-ops when promotion base 'p' is a power-of-two (common setting),
+    // avoiding expensive integer division/mod operations. Fall back to
+    // modulus/division for general p. This reduces instruction cost and
+    // branch/mispredict pressure on hot paths.
     uint32_t result = 0;
     size_t h = std::hash<K>{}(k);
-    uint64_t flip = h % traits::p;
-    while (flip == 0)
+
+    // If hash is zero (unlikely), treat as no promotion.
+    if (h == 0) return 0;
+
+    // traits::p is a compile-time constant; check if it is a power of two.
+    constexpr size_t P = traits::p;
+    if ((P & (P - 1)) == 0)
     {
-        result++;
-        if (result > MAX_HEIGHT - 1)
+        // p is a power of two: use mask and right-shift.
+        const size_t mask = P - 1;
+        const unsigned shift = __builtin_ctz((unsigned)P); // log2(P)
+        while (result < (MAX_HEIGHT - 1))
         {
-            result = MAX_HEIGHT - 1;
-            break;
+            if ((h & mask) != 0) break;
+            ++result;
+            h >>= shift;
+            if (h == 0) break;
         }
-        h /= traits::p;
-        flip = h % traits::p;
     }
-
-    // lightweight density hint (thread-local), does not change class layout.
-    // If a thread recently observed a very dense leaf, slightly bias toward
-    // higher promotions to spread future keys across levels.
-    static thread_local BSkipNode<traits>* tl_last_leaf[MAX_HEIGHT] = {nullptr};
-    // only read hints (optimistic, non-blocking). If tl_last_leaf[0] is set,
-    // use it to estimate density; otherwise fall back to neutral.
-    double bias = 0.0;
-    BSkipNode<traits>* leaf = tl_last_leaf[0];
-    if (leaf)
+    else
     {
-        // safe to read num_elts without locks for heuristic purposes; worst case
-        // it is slightly stale and only affects promotion probability.
-        double density = (double)leaf->num_elts / (double)traits::MAX_KEYS;
-        if (density > 0.80) bias = 1.0;
-        else if (density > 0.60) bias = 0.5;
+        // General case: use modulus/divide semantics (less common).
+        while (result < (MAX_HEIGHT - 1))
+        {
+            if ((h % P) != 0) break;
+            ++result;
+            h /= P;
+            if (h == 0) break;
+        }
     }
 
-    // Apply bias (deterministic change to result)
-    if (bias > 0.0)
-    {
-        // increase result by at most 1 based on bias, clamp
-        if (bias >= 1.0) result = std::min<uint32_t>(result + 1, MAX_HEIGHT - 1);
-        else if (bias >= 0.5) result = std::min<uint32_t>(result + 1, MAX_HEIGHT - 1);
-    }
-
-    assert(result < MAX_HEIGHT);
+    // Clamp to valid height and return.
+    if (result >= MAX_HEIGHT) result = MAX_HEIGHT - 1;
     return result;
 }
 
@@ -976,43 +972,76 @@ bool BSkip<traits>::insert(traits::element_type k)
         }
     }
 
-    // Helper: fast rank search inside a node using binary-search semantics.
+    // Helper: fast rank search using exponential (galloping) + binary search.
     // Returns pair<rank, found> where rank is the largest index i with key[i] <= k.
+    // Optimized to:
+    //  - Use small linear scan for tiny nodes (branch-predictable).
+    //  - Use exponential search to find a candidate window quickly for large nodes,
+    //    then binary search inside that window to minimize probes.
     auto find_rank_in_node = [&](BSkipNode<traits>* node, K search_key) -> std::pair<uint32_t,bool> {
         uint32_t n = node->num_elts;
-        // Defensive: if no elements, return {0,false}
         if (n == 0) return {0, false};
 
-        // Quick check first/last to avoid more work
-        K first = node->get_key_at_rank(0);
-        K last = node->get_key_at_rank(n - 1);
-        if (search_key < first) {
-            // If search key less than the first, return 0 and not found.
-            return {0, first == search_key};
-        }
-        if (search_key >= last) {
-            return {n - 1, last == search_key};
+        // Leaf fast path: use blind_read_key (no virtual dispatch).
+        if (node->level == 0) {
+            auto leaf = static_cast<BSkipNodeLeaf<traits>*>(node);
+            // Use a smaller linear threshold to prefer exponential+binary search
+            // for medium-sized nodes; this reduces the average number of probes
+            // for large node widths (traits::MAX_KEYS can be large).
+            constexpr uint32_t LINEAR_THRESHOLD = 16;
+            if (n <= LINEAR_THRESHOLD) {
+                for (uint32_t i = 0; i < n; ++i) {
+                    K k = leaf->blind_read_key(i);
+                    if (k == search_key) return {i, true};
+                    if (k > search_key) return { (i == 0) ? 0 : (i - 1), false };
+                }
+                return { n - 1, false };
+            }
+
+            // Exponential search to find bounds [lo, hi] where key[lo] <= search_key < key[hi]
+            uint32_t bound = 1;
+            while (bound < n && leaf->blind_read_key(bound) <= search_key) bound <<= 1;
+            uint32_t lo = bound >> 1;
+            uint32_t hi = std::min(bound, n - 1u);
+
+            // Binary search within [lo, hi]
+            while (lo + 1 < hi) {
+                uint32_t mid = lo + (hi - lo) / 2;
+                K midk = leaf->blind_read_key(mid);
+                if (midk <= search_key) lo = mid;
+                else hi = mid;
+            }
+            K hk = leaf->blind_read_key(hi);
+            if (hk <= search_key) return { hi, hk == search_key };
+            K lk = leaf->blind_read_key(lo);
+            return { lo, lk == search_key };
         }
 
-        // Binary search for largest index with key <= search_key.
-        uint32_t lo = 0;
-        uint32_t hi = n - 1;
+        // Internal node fast path: access keys[] directly.
+        auto inode = static_cast<BSkipNodeInternal<traits>*>(node);
+        // Quick bounds checks to avoid work when possible.
+        K first = inode->keys[0];
+        K last = inode->keys[n - 1];
+        if (search_key < first) return {0, first == search_key};
+        if (search_key >= last) return {n - 1, last == search_key};
+
+        // Exponential search over keys[] to find a narrow interval.
+        uint32_t bound = 1;
+        while (bound < n && inode->keys[bound] <= search_key) bound <<= 1;
+        uint32_t lo = bound >> 1;
+        uint32_t hi = std::min(bound, n - 1u);
+
+        // Binary search within [lo, hi]
         while (lo + 1 < hi) {
             uint32_t mid = lo + (hi - lo) / 2;
-            K midk = node->get_key_at_rank(mid);
-            if (midk <= search_key) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
+            K midk = inode->keys[mid];
+            if (midk <= search_key) lo = mid;
+            else hi = mid;
         }
-        bool found = (node->get_key_at_rank(hi) == search_key) ? true : (node->get_key_at_rank(lo) == search_key);
-        // pick the largest index <= search_key
-        if (node->get_key_at_rank(hi) <= search_key) {
-            return {hi, node->get_key_at_rank(hi) == search_key};
-        } else {
-            return {lo, node->get_key_at_rank(lo) == search_key};
-        }
+        K hk = inode->keys[hi];
+        if (hk <= search_key) return { hi, hk == search_key };
+        K lk = inode->keys[lo];
+        return { lo, lk == search_key };
     };
 
     for (uint level = MAX_HEIGHT; level-- > 0;)
@@ -1543,39 +1572,33 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
     // same fast node-local binary search used in insert
     auto find_rank_in_node = [&](BSkipNode<traits>* node, K search_key) -> std::pair<uint32_t,bool> {
         uint32_t n = node->num_elts;
-        // Defensive: if no elements, return {0,false}
         if (n == 0) return {0, false};
 
-        // Quick check first/last to avoid more work
+        // First/last quick checks (cheap).
         K first = node->get_key_at_rank(0);
         K last = node->get_key_at_rank(n - 1);
-        if (search_key < first) {
-            // If search key less than the first, return 0 and not found.
-            return {0, first == search_key};
-        }
-        if (search_key >= last) {
-            return {n - 1, last == search_key};
-        }
+        if (search_key < first) return {0, first == search_key};
+        if (search_key >= last) return {n - 1, last == search_key};
 
-        // Binary search for largest index with key <= search_key.
-        uint32_t lo = 0;
-        uint32_t hi = n - 1;
+        // Use exponential search to find a narrow window, then binary search.
+        uint32_t bound = 1;
+        // Grow bound until we exceed or reach near n-1.
+        while (bound < n && node->get_key_at_rank(bound) <= search_key) bound <<= 1;
+        uint32_t lo = bound >> 1;
+        uint32_t hi = std::min(bound, n - 1u);
+
+        // Binary search within [lo, hi].
         while (lo + 1 < hi) {
             uint32_t mid = lo + (hi - lo) / 2;
             K midk = node->get_key_at_rank(mid);
-            if (midk <= search_key) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
+            if (midk <= search_key) lo = mid;
+            else hi = mid;
         }
-        bool found = (node->get_key_at_rank(hi) == search_key) ? true : (node->get_key_at_rank(lo) == search_key);
-        // pick the largest index <= search_key
-        if (node->get_key_at_rank(hi) <= search_key) {
-            return {hi, node->get_key_at_rank(hi) == search_key};
-        } else {
-            return {lo, node->get_key_at_rank(lo) == search_key};
-        }
+
+        K hk = node->get_key_at_rank(hi);
+        if (hk <= search_key) return { hi, hk == search_key };
+        K lk = node->get_key_at_rank(lo);
+        return { lo, lk == search_key };
     };
 
     for (int level = MAX_HEIGHT - 1; level >= 0; level--)
