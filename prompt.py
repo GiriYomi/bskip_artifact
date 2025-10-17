@@ -1,3 +1,5 @@
+prompt0 = """optimize it"""
+
 prompt1 = """Optimize the B-skiplist data structure to maximize YCSB throughput. Focus on making the code faster while keeping it simple and correct. Don't change function names or public interfaces. Make sure it compiles and works correctly."""
 
 prompt2 = """You are evolving the entire B-skiplist data structure (bskip.h) to maximize YCSB throughput through revolutionary algorithmic innovations. You have complete freedom to redesign the core algorithms and data organization. Do NOT change public function signatures, class/struct names, or headers included by ycsb.cpp. The binary must compile with the provided Makefile and produce correct map semantics.
