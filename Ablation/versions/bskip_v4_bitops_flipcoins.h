@@ -956,21 +956,11 @@ bool BSkip<traits>::insert(traits::element_type k)
            level_to_promote);
 #endif
 
-    // Thread-local per-level hints to accelerate traversal. Hints are purely
-    // advisory: they help start the search closer to the likely node.
-    static thread_local BSkipNode<traits>* tl_hints[MAX_HEIGHT] = {nullptr};
+    // Bit-ops only: no thread hints
 
     auto curr_node = headers[MAX_HEIGHT - 1];
 
-    // Try to use the highest valid hint that seems to contain the key.
-    // This is optimistic and only helps avoid starting at the absolute header.
-    for (int L = MAX_HEIGHT - 1; L >= 0; --L) {
-        BSkipNode<traits>* hint = tl_hints[L];
-        if (hint && hint->get_header() <= key && hint->next_header > key && hint->level == (uint32_t)L) {
-            curr_node = hint;
-            break;
-        }
-    }
+    // Bit-ops only: start from header (no thread hints)
 
     // Bit-ops only: use baseline rank lookup (no exponential search)
 
@@ -1100,7 +1090,6 @@ bool BSkip<traits>::insert(traits::element_type k)
                  curr_node->get_header());
 
         // Update the thread-local hint for this level (optimistic)
-        tl_hints[level] = curr_node;
 
         // Bit-ops only: use baseline rank lookup
         auto [rank, found_key] = curr_node->find_key_and_check(key);
@@ -1194,10 +1183,6 @@ bool BSkip<traits>::insert(traits::element_type k)
             }
 
             // update thread-local leaf hint to the leaf that contained the key
-            if (tl_hints[0] && tl_hints[0]->level == 0)
-                ; // hint already a leaf
-            else
-                tl_hints[0] = curr_node->level == 0 ? curr_node : tl_hints[0];
 
             return true;
         }
@@ -1482,22 +1467,13 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
     int cpuid = sched_getcpu();
     ReaderWriterLock *parent_lock = nullptr;
 
-    // Start with a hopeful hint-based starting node. Use thread-local hints
-    // to accelerate locating the right chain node. Hints are optimistic and
-    // only reduce traversal when they are valid.
-    static thread_local BSkipNode<traits>* tl_hints[MAX_HEIGHT] = {nullptr};
+    // Bit-ops only: start from header
+    // Bit-ops only: no thread hints
 
     auto curr_node = headers[MAX_HEIGHT - 1];
     if (!curr_node) { assert(false); }
 
-    // Try to leverage a high-level hint
-    for (int L = MAX_HEIGHT - 1; L >= 0; --L) {
-        BSkipNode<traits>* hint = tl_hints[L];
-        if (hint && hint->get_header() <= k && hint->next_header > k && hint->level == (uint32_t)L) {
-            curr_node = hint;
-            break;
-        }
-    }
+    // Bit-ops only: start from header (no thread hints)
 
     // Bit-ops only: use baseline rank lookup (no exponential search)
 
@@ -1570,7 +1546,6 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
         assert(curr_node->get_header() <= k);
 
         // Update thread-local hint for this level
-        tl_hints[level] = curr_node;
 
         // Bit-ops only: use baseline rank lookup
         auto [rank, found_key] = curr_node->find_key_and_check(k);
@@ -1590,7 +1565,6 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
             }
 
             // update leaf-level hint with the found node (optimistic)
-            if (curr_node->level == 0) tl_hints[0] = curr_node;
 
             return curr_node;
         }
