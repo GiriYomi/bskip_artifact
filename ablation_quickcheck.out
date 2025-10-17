@@ -1,0 +1,27 @@
+
+================================================================================
+ABLATION STUDY RUNNER
+================================================================================
+Configuration:
+  Runs per version: 1
+  Total versions: 5
+  Dataset: /mydata/skip_data/uniform/
+  Workload: a
+  Threads: 32
+  Output directory: ablation_results/quickcheck/run_20251017_141712
+================================================================================
+================================================================================
+Step 1: Checking Prerequisites
+================================================================================
+✓ Versions directory found: /Users/girigiri_yomi/Udel_Proj/bskip_artifact/Ablation/versions
+  ✓ v1_binary_search: V1: Binary Search
+  ✓ v2_exponential_search: V2: Exponential Search
+  ✓ v3_thread_hints: V3: Thread-Local Hints
+  ✓ v4_bitops_flipcoins: V4: Bitops in flip_coins
+  ✓ evolved_full: Evolved (Full)
+
+✗ Dataset files not found:
+  /mydata/skip_data/uniform/loada_unif_int.dat
+  /mydata/skip_data/uniform/txnsa_unif_int.dat
+
+✗ Prerequisites check failed. Exiting.
