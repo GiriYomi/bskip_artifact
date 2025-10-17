@@ -972,77 +972,7 @@ bool BSkip<traits>::insert(traits::element_type k)
         }
     }
 
-    // Helper: fast rank search using exponential (galloping) + binary search.
-    // Returns pair<rank, found> where rank is the largest index i with key[i] <= k.
-    // Optimized to:
-    //  - Use small linear scan for tiny nodes (branch-predictable).
-    //  - Use exponential search to find a candidate window quickly for large nodes,
-    //    then binary search inside that window to minimize probes.
-    auto find_rank_in_node = [&](BSkipNode<traits>* node, K search_key) -> std::pair<uint32_t,bool> {
-        uint32_t n = node->num_elts;
-        if (n == 0) return {0, false};
-
-        // Leaf fast path: use blind_read_key (no virtual dispatch).
-        if (node->level == 0) {
-            auto leaf = static_cast<BSkipNodeLeaf<traits>*>(node);
-            // Use a smaller linear threshold to prefer exponential+binary search
-            // for medium-sized nodes; this reduces the average number of probes
-            // for large node widths (traits::MAX_KEYS can be large).
-            constexpr uint32_t LINEAR_THRESHOLD = 16;
-            if (n <= LINEAR_THRESHOLD) {
-                for (uint32_t i = 0; i < n; ++i) {
-                    K k = leaf->blind_read_key(i);
-                    if (k == search_key) return {i, true};
-                    if (k > search_key) return { (i == 0) ? 0 : (i - 1), false };
-                }
-                return { n - 1, false };
-            }
-
-            // Exponential search to find bounds [lo, hi] where key[lo] <= search_key < key[hi]
-            uint32_t bound = 1;
-            while (bound < n && leaf->blind_read_key(bound) <= search_key) bound <<= 1;
-            uint32_t lo = bound >> 1;
-            uint32_t hi = std::min(bound, n - 1u);
-
-            // Binary search within [lo, hi]
-            while (lo + 1 < hi) {
-                uint32_t mid = lo + (hi - lo) / 2;
-                K midk = leaf->blind_read_key(mid);
-                if (midk <= search_key) lo = mid;
-                else hi = mid;
-            }
-            K hk = leaf->blind_read_key(hi);
-            if (hk <= search_key) return { hi, hk == search_key };
-            K lk = leaf->blind_read_key(lo);
-            return { lo, lk == search_key };
-        }
-
-        // Internal node fast path: access keys[] directly.
-        auto inode = static_cast<BSkipNodeInternal<traits>*>(node);
-        // Quick bounds checks to avoid work when possible.
-        K first = inode->keys[0];
-        K last = inode->keys[n - 1];
-        if (search_key < first) return {0, first == search_key};
-        if (search_key >= last) return {n - 1, last == search_key};
-
-        // Exponential search over keys[] to find a narrow interval.
-        uint32_t bound = 1;
-        while (bound < n && inode->keys[bound] <= search_key) bound <<= 1;
-        uint32_t lo = bound >> 1;
-        uint32_t hi = std::min(bound, n - 1u);
-
-        // Binary search within [lo, hi]
-        while (lo + 1 < hi) {
-            uint32_t mid = lo + (hi - lo) / 2;
-            K midk = inode->keys[mid];
-            if (midk <= search_key) lo = mid;
-            else hi = mid;
-        }
-        K hk = inode->keys[hi];
-        if (hk <= search_key) return { hi, hk == search_key };
-        K lk = inode->keys[lo];
-        return { lo, lk == search_key };
-    };
+    // Bit-ops only: use baseline rank lookup (no exponential search)
 
     for (uint level = MAX_HEIGHT; level-- > 0;)
     {
@@ -1172,8 +1102,8 @@ bool BSkip<traits>::insert(traits::element_type k)
         // Update the thread-local hint for this level (optimistic)
         tl_hints[level] = curr_node;
 
-        // Find the local rank (binary)
-        auto [rank, found_key] = find_rank_in_node(curr_node, key);
+        // Bit-ops only: use baseline rank lookup
+        auto [rank, found_key] = curr_node->find_key_and_check(key);
 
         if (found_key)
         {
@@ -1569,37 +1499,7 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
         }
     }
 
-    // same fast node-local binary search used in insert
-    auto find_rank_in_node = [&](BSkipNode<traits>* node, K search_key) -> std::pair<uint32_t,bool> {
-        uint32_t n = node->num_elts;
-        if (n == 0) return {0, false};
-
-        // First/last quick checks (cheap).
-        K first = node->get_key_at_rank(0);
-        K last = node->get_key_at_rank(n - 1);
-        if (search_key < first) return {0, first == search_key};
-        if (search_key >= last) return {n - 1, last == search_key};
-
-        // Use exponential search to find a narrow window, then binary search.
-        uint32_t bound = 1;
-        // Grow bound until we exceed or reach near n-1.
-        while (bound < n && node->get_key_at_rank(bound) <= search_key) bound <<= 1;
-        uint32_t lo = bound >> 1;
-        uint32_t hi = std::min(bound, n - 1u);
-
-        // Binary search within [lo, hi].
-        while (lo + 1 < hi) {
-            uint32_t mid = lo + (hi - lo) / 2;
-            K midk = node->get_key_at_rank(mid);
-            if (midk <= search_key) lo = mid;
-            else hi = mid;
-        }
-
-        K hk = node->get_key_at_rank(hi);
-        if (hk <= search_key) return { hi, hk == search_key };
-        K lk = node->get_key_at_rank(lo);
-        return { lo, lk == search_key };
-    };
+    // Bit-ops only: use baseline rank lookup (no exponential search)
 
     for (int level = MAX_HEIGHT - 1; level >= 0; level--)
     {
@@ -1672,8 +1572,8 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
         // Update thread-local hint for this level
         tl_hints[level] = curr_node;
 
-        // Fast local binary search in node (reduces work for wide nodes)
-        auto [rank, found_key] = find_rank_in_node(curr_node, k);
+        // Bit-ops only: use baseline rank lookup
+        auto [rank, found_key] = curr_node->find_key_and_check(k);
 
         if (curr_node->get_key_at_rank(rank) == k)
         {

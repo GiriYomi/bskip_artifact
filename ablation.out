@@ -1,0 +1,252 @@
+
+================================================================================
+ABLATION STUDY RUNNER
+================================================================================
+Configuration:
+  Runs per version: 10
+  Total versions: 5
+  Dataset: /mydata/skip_data/uniform/
+  Workload: a
+  Threads: 32
+  Output directory: ablation_results/run_20251016_153052
+================================================================================
+================================================================================
+Step 1: Checking Prerequisites
+================================================================================
+✓ Versions directory found: /opt/bskip_artifact/Ablation/versions
+  ✓ v1_binary_search: V1: Binary Search
+  ✓ v2_exponential_search: V2: Exponential Search
+  ✓ v3_thread_hints: V3: Thread-Local Hints
+  ✓ v4_bitops_flipcoins: V4: Bitops in flip_coins
+  ✓ evolved_full: Evolved (Full)
+
+✓ Dataset files found
+  /mydata/skip_data/uniform/loada_unif_int.dat
+  /mydata/skip_data/uniform/txnsa_unif_int.dat
+================================================================================
+Step 2: Pre-flight Check (Compilation + Tests)
+================================================================================
+
+Checking V1: Binary Search...
+  Compiling bskip_v1_binary_search.h...
+  ✓ Compilation successful
+  Testing bskip_v1_binary_search.h...
+  ✓ Tests passed
+  ✓ V1: Binary Search ready for benchmarking
+
+Checking V2: Exponential Search...
+  Compiling bskip_v2_exponential_search.h...
+  ✓ Compilation successful
+  Testing bskip_v2_exponential_search.h...
+  ✓ Tests passed
+  ✓ V2: Exponential Search ready for benchmarking
+
+Checking V3: Thread-Local Hints...
+  Compiling bskip_v3_thread_hints.h...
+  ✓ Compilation successful
+  Testing bskip_v3_thread_hints.h...
+  ✓ Tests passed
+  ✓ V3: Thread-Local Hints ready for benchmarking
+
+Checking V4: Bitops in flip_coins...
+  Compiling bskip_v4_bitops_flipcoins.h...
+  ✓ Compilation successful
+  Testing bskip_v4_bitops_flipcoins.h...
+  ✓ Tests passed
+  ✓ V4: Bitops in flip_coins ready for benchmarking
+
+Checking Evolved (Full)...
+  Compiling best_program.h...
+  ✓ Compilation successful
+  Testing best_program.h...
+  ✓ Tests passed
+  ✓ Evolved (Full) ready for benchmarking
+
+✅ All 4 versions passed pre-flight check!
+
+================================================================================
+Step 3: Running Ablation Study (10 runs per version)
+================================================================================
+
+================================================================================
+Using Baseline Data (Pre-computed)
+================================================================================
+✓ Using baseline statistics from evaluator.py
+  Load: 16.388733 ± 0.066115 ops/us
+  Run:  16.784209 ± 0.027988 ops/us
+✓ Backup already exists: /opt/bskip_artifact/bskiplist/bskip_original_backup.h
+
+================================================================================
+Benchmarking: V1: Binary Search
+================================================================================
+Version ID: v1_binary_search
+Description: Enable BINARY_SEARCH=1
+File: /opt/bskip_artifact/Ablation/versions/bskip_v1_binary_search.h
+
+Switching to v1_binary_search...
+Compiling v1_binary_search...
+✓ Compilation successful
+
+Running 10 benchmark iterations:
+  Run 1/10... ✓ Load: 16.419, Run: 16.870 ops/us
+  Run 2/10... ✓ Load: 16.495, Run: 16.857 ops/us
+  Run 3/10... ✓ Load: 16.416, Run: 16.890 ops/us
+  Run 4/10... ✓ Load: 16.392, Run: 16.867 ops/us
+  Run 5/10... ✓ Load: 16.442, Run: 16.849 ops/us
+  Run 6/10... ✓ Load: 16.405, Run: 16.814 ops/us
+  Run 7/10... ✓ Load: 16.517, Run: 16.881 ops/us
+  Run 8/10... ✓ Load: 16.482, Run: 16.883 ops/us
+  Run 9/10... ✓ Load: 16.410, Run: 16.884 ops/us
+  Run 10/10... ✓ Load: 16.407, Run: 16.875 ops/us
+
+✓ V1: Binary Search completed:
+  Load:  16.439 ± 0.044 ops/us
+  Run:   16.867 ± 0.023 ops/us
+
+================================================================================
+Benchmarking: V2: Exponential Search
+================================================================================
+Version ID: v2_exponential_search
+Description: Exponential + binary search strategy
+File: /opt/bskip_artifact/Ablation/versions/bskip_v2_exponential_search.h
+
+Switching to v2_exponential_search...
+Compiling v2_exponential_search...
+✓ Compilation successful
+
+Running 10 benchmark iterations:
+  Run 1/10... ✓ Load: 18.305, Run: 18.054 ops/us
+  Run 2/10... ✓ Load: 18.373, Run: 18.057 ops/us
+  Run 3/10... ✓ Load: 18.422, Run: 18.068 ops/us
+  Run 4/10... ✓ Load: 18.050, Run: 18.095 ops/us
+  Run 5/10... ✓ Load: 18.312, Run: 18.065 ops/us
+  Run 6/10... ✓ Load: 18.194, Run: 18.064 ops/us
+  Run 7/10... ✓ Load: 18.430, Run: 18.009 ops/us
+  Run 8/10... ✓ Load: 18.279, Run: 18.034 ops/us
+  Run 9/10... ✓ Load: 18.214, Run: 18.056 ops/us
+  Run 10/10... ✓ Load: 18.227, Run: 18.032 ops/us
+
+✓ V2: Exponential Search completed:
+  Load:  18.281 ± 0.116 ops/us
+  Run:   18.053 ± 0.024 ops/us
+
+================================================================================
+Benchmarking: V3: Thread-Local Hints
+================================================================================
+Version ID: v3_thread_hints
+Description: Thread-local hints for traversal
+File: /opt/bskip_artifact/Ablation/versions/bskip_v3_thread_hints.h
+
+Switching to v3_thread_hints...
+Compiling v3_thread_hints...
+✓ Compilation successful
+
+Running 10 benchmark iterations:
+  Run 1/10... ✓ Load: 16.723, Run: 17.255 ops/us
+  Run 2/10... ✓ Load: 16.721, Run: 17.323 ops/us
+  Run 3/10... ✓ Load: 16.735, Run: 17.352 ops/us
+  Run 4/10... ✓ Load: 16.587, Run: 17.321 ops/us
+  Run 5/10... ✓ Load: 16.702, Run: 17.290 ops/us
+  Run 6/10... ✓ Load: 16.619, Run: 17.299 ops/us
+  Run 7/10... ✓ Load: 16.688, Run: 17.310 ops/us
+  Run 8/10... ✓ Load: 16.603, Run: 17.358 ops/us
+  Run 9/10... ✓ Load: 16.779, Run: 17.330 ops/us
+  Run 10/10... ✓ Load: 16.681, Run: 17.349 ops/us
+
+✓ V3: Thread-Local Hints completed:
+  Load:  16.684 ± 0.062 ops/us
+  Run:   17.319 ± 0.032 ops/us
+
+================================================================================
+Benchmarking: V4: Bitops in flip_coins
+================================================================================
+Version ID: v4_bitops_flipcoins
+Description: Bit operations optimization in flip_coins
+File: /opt/bskip_artifact/Ablation/versions/bskip_v4_bitops_flipcoins.h
+
+Switching to v4_bitops_flipcoins...
+Compiling v4_bitops_flipcoins...
+✓ Compilation successful
+
+Running 10 benchmark iterations:
+  Run 1/10... ✓ Load: 18.155, Run: 17.902 ops/us
+  Run 2/10... ✓ Load: 16.632, Run: 17.339 ops/us
+  Run 3/10... ✓ Load: 18.081, Run: 17.884 ops/us
+  Run 4/10... ✓ Load: 18.252, Run: 17.803 ops/us
+  Run 5/10... ✓ Load: 18.147, Run: 17.920 ops/us
+  Run 6/10... ✓ Load: 18.132, Run: 17.952 ops/us
+  Run 7/10... ✓ Load: 18.198, Run: 17.894 ops/us
+  Run 8/10... ✓ Load: 18.287, Run: 17.944 ops/us
+  Run 9/10... ✓ Load: 18.255, Run: 17.803 ops/us
+  Run 10/10... ✓ Load: 18.212, Run: 17.896 ops/us
+
+✓ V4: Bitops in flip_coins completed:
+  Load:  18.035 ± 0.497 ops/us
+  Run:   17.834 ± 0.181 ops/us
+
+================================================================================
+Benchmarking: Evolved (Full)
+================================================================================
+Version ID: evolved_full
+Description: Full evolved version with all optimizations
+File: /opt/bskip_artifact/openevolve_output_p8_iter100/best/best_program.h
+
+Switching to evolved_full...
+Compiling evolved_full...
+✓ Compilation successful
+
+Running 10 benchmark iterations:
+  Run 1/10... ✓ Load: 18.299, Run: 18.474 ops/us
+  Run 2/10... ✓ Load: 18.324, Run: 18.527 ops/us
+  Run 3/10... ✓ Load: 18.320, Run: 18.519 ops/us
+  Run 4/10... ✓ Load: 18.021, Run: 18.491 ops/us
+  Run 5/10... ✓ Load: 18.157, Run: 18.579 ops/us
+  Run 6/10... ✓ Load: 18.303, Run: 18.555 ops/us
+  Run 7/10... ✓ Load: 18.278, Run: 18.521 ops/us
+  Run 8/10... ✓ Load: 18.183, Run: 18.562 ops/us
+  Run 9/10... ✓ Load: 17.993, Run: 18.540 ops/us
+  Run 10/10... ✓ Load: 18.067, Run: 18.570 ops/us
+
+✓ Evolved (Full) completed:
+  Load:  18.195 ± 0.129 ops/us
+  Run:   18.534 ± 0.034 ops/us
+
+================================================================================
+Restoring original bskip.h...
+✓ Restored original bskip.h from backup
+================================================================================
+
+================================================================================
+Step 4: Generating Comparison Report
+================================================================================
+
+================================================================================
+Step 3: Generating Comparison Report
+================================================================================
+
+Performance Comparison vs Baseline
+========================================================================================================================
+Version                        Load (ops/us)        Run (ops/us)         Load Δ%      Run Δ%       Combined Δ% 
+========================================================================================================================
+Baseline (Original)              16.389 ± 0.066    16.784 ± 0.028       0.00%      0.00%      0.00%
+------------------------------------------------------------------------------------------------------------------------
+Evolved (Full)                   18.195 ± 0.129    18.534 ± 0.034  +    11.02% +    10.42% +    10.72%
+V2: Exponential Search           18.281 ± 0.116    18.053 ± 0.024  +    11.54% +     7.56% +     9.55%
+V4: Bitops in flip_coins         18.035 ± 0.497    17.834 ± 0.181  +    10.05% +     6.25% +     8.15%
+V3: Thread-Local Hints           16.684 ± 0.062    17.319 ± 0.032  +     1.80% +     3.18% +     2.49%
+V1: Binary Search                16.439 ± 0.044    16.867 ± 0.023  +     0.31% +     0.49% +     0.40%
+========================================================================================================================
+
+✓ Detailed report saved to: ablation_results/run_20251016_153052/ABLATION_REPORT.txt
+✓ JSON data saved to: ablation_results/run_20251016_153052/ablation_results.json
+
+================================================================================
+✓ ABLATION STUDY COMPLETE
+================================================================================
+
+All results saved in: ablation_results/run_20251016_153052
+  - Ablation report: ablation_results/run_20251016_153052/ABLATION_REPORT.txt
+  - JSON data: ablation_results/run_20251016_153052/ablation_results.json
+  - Individual runs: ablation_results/run_20251016_153052
+================================================================================
+
