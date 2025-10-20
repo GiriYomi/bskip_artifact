@@ -1,0 +1,28 @@
+{
+  "id": "9f0e8cfd-3cd9-4757-8294-7cf565a712dc",
+  "generation": 1,
+  "iteration": 4,
+  "current_iteration": 4,
+  "metrics": {
+    "candidate1_median_load_ops_per_us": 16.461504,
+    "candidate1_median_run_ops_per_us": 16.885469,
+    "candidate2_median_load_ops_per_us": 16.698173,
+    "candidate2_median_run_ops_per_us": 16.986915,
+    "candidate_avg_load_ops_per_us": 16.5798385,
+    "candidate_avg_run_ops_per_us": 16.936192,
+    "load_improvement_pct": 1.1660804010794719,
+    "run_improvement_pct": 0.9055115409206439,
+    "combined_score": 1.035795971000058,
+    "load_is_significant": true,
+    "run_is_significant": true,
+    "load_threshold": 16.45484797678556,
+    "run_threshold": 16.812197236617845,
+    "baseline_load_mean": 16.3887327,
+    "baseline_load_stdev": 0.06611527678556268,
+    "baseline_run_mean": 16.78420905,
+    "baseline_run_stdev": 0.02798818661784372
+  },
+  "language": "python",
+  "timestamp": 1760738648.0935228,
+  "saved_at": 1760738648.1160629
+}
