@@ -1,0 +1,119 @@
+
+================================================================================
+BASELINE vs EVOLVED COMPARISON
+================================================================================
+Configuration:
+  Number of runs per version: 5
+  Dataset directory: /mydata/skip_data/uniform/
+  Workload: e
+  Threads: 32
+  Output directory: baseline_evolved_comparison/run_20251020_133949
+================================================================================
+
+================================================================================
+Checking dataset files...
+================================================================================
+Dataset directory: /mydata/skip_data/uniform
+Workload: e
+  ✓ loade_unif_int.dat - Found
+  ✓ txnse_unif_int.dat - Found
+✓ All required dataset files found!
+Backing up baseline bskip.h to /opt/bskip_artifact/bskiplist/bskip_backup.h...
+✓ Backup created
+
+================================================================================
+PHASE 1: BASELINE VERSION
+================================================================================
+
+================================================================================
+Compiling YCSB (baseline)...
+================================================================================
+Running 'make clean'...
+Running 'make ycsb'...
+✓ Compilation successful for baseline!
+
+================================================================================
+Running YCSB 5 times with BASELINE
+================================================================================
+
+  Run 1/5 (BASELINE)... ✓ Load: 16.435 ops/us, Run: 14.329 ops/us
+
+  Run 2/5 (BASELINE)... ✓ Load: 16.501 ops/us, Run: 14.319 ops/us
+
+  Run 3/5 (BASELINE)... ✓ Load: 16.405 ops/us, Run: 14.332 ops/us
+
+  Run 4/5 (BASELINE)... ✓ Load: 16.452 ops/us, Run: 14.298 ops/us
+
+  Run 5/5 (BASELINE)... ✓ Load: 16.391 ops/us, Run: 14.342 ops/us
+
+================================================================================
+BASELINE completed: 5 successful, 0 failed
+================================================================================
+
+================================================================================
+PHASE 2: EVOLVED VERSION
+================================================================================
+Replacing bskip.h with evolved version from /opt/bskip_artifact/EvolveResult/result_trace_complex_prompt_iter100/best/best_program.h...
+✓ Evolved version installed
+
+================================================================================
+Compiling YCSB (evolved)...
+================================================================================
+Running 'make clean'...
+Running 'make ycsb'...
+✓ Compilation successful for evolved!
+
+================================================================================
+Running YCSB 5 times with EVOLVED
+================================================================================
+
+  Run 1/5 (EVOLVED)... ✓ Load: 18.285 ops/us, Run: 14.505 ops/us
+
+  Run 2/5 (EVOLVED)... ✓ Load: 18.228 ops/us, Run: 14.454 ops/us
+
+  Run 3/5 (EVOLVED)... ✓ Load: 18.007 ops/us, Run: 14.491 ops/us
+
+  Run 4/5 (EVOLVED)... ✓ Load: 18.129 ops/us, Run: 14.484 ops/us
+
+  Run 5/5 (EVOLVED)... ✓ Load: 18.112 ops/us, Run: 14.484 ops/us
+
+================================================================================
+EVOLVED completed: 5 successful, 0 failed
+================================================================================
+Restoring baseline bskip.h from backup...
+✓ Baseline restored
+
+================================================================================
+Generating Comparison Report
+================================================================================
+✓ JSON results saved to: baseline_evolved_comparison/run_20251020_133949/comparison_results.json
+✓ Comparison report saved to: baseline_evolved_comparison/run_20251020_133949/COMPARISON_REPORT.md
+
+================================================================================
+COMPARISON SUMMARY
+================================================================================
+
+Load Throughput (Mean):
+  Baseline: 16.437007 ops/us
+  Evolved:  18.152252 ops/us
+  Change:   +10.44%
+
+Run Throughput (Mean):
+  Baseline: 14.323904 ops/us
+  Evolved:  14.483694 ops/us
+  Change:   +1.12%
+
+================================================================================
+
+
+================================================================================
+✓ COMPARISON COMPLETE
+================================================================================
+
+All results saved in: baseline_evolved_comparison/run_20251020_133949
+  - Baseline runs: baseline_evolved_comparison/run_20251020_133949/baseline_runs
+  - Evolved runs: baseline_evolved_comparison/run_20251020_133949/evolved_runs
+  - Comparison report: baseline_evolved_comparison/run_20251020_133949/COMPARISON_REPORT.md
+  - JSON data: baseline_evolved_comparison/run_20251020_133949/comparison_results.json
+================================================================================
+
