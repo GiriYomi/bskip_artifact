@@ -1,0 +1,21 @@
+{
+    "files.associations": {
+        "deque": "cpp",
+        "map": "cpp",
+        "string": "cpp",
+        "unordered_map": "cpp",
+        "unordered_set": "cpp",
+        "vector": "cpp",
+        "list": "cpp",
+        "set": "cpp",
+        "__bit_reference": "cpp",
+        "iterator": "cpp",
+        "memory_resource": "cpp",
+        "initializer_list": "cpp",
+        "iosfwd": "cpp",
+        "limits": "cpp",
+        "new": "cpp",
+        "tuple": "cpp",
+        "typeinfo": "cpp"
+    }
+}
