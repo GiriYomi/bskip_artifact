@@ -8,7 +8,7 @@
  *
  * ============================================================================
  */
-// EVOLVE-BLOCK-START
+
 #ifndef _BSKIP_H_
 #define _BSKIP_H_
 
@@ -835,7 +835,7 @@ private:
                     int level, traits::key_type max);
 };
 
-
+// EVOLVE-BLOCK-START
 
 template <typename traits>
 uint32_t BSkip<traits>::flip_coins(K k)
@@ -1668,6 +1668,8 @@ bool BSkip<traits>::insert(traits::element_type k)
     return true;
 }
 
+// EVOLVE-BLOCK-END
+
 template <typename traits>
 BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
 {
@@ -1828,6 +1830,7 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
     return NULL;
 }
 
+// EVOLVE-BLOCK-START
 
 template <typename traits>
 traits::value_type BSkip<traits>::value(traits::key_type k) const
@@ -2082,6 +2085,8 @@ traits::value_type BSkip<traits>::value(traits::key_type k) const
 
     return NULL;
 }
+
+// EVOLVE-BLOCK-END
 
 // map_range given a start and end
 // Todo, turn the locking find into a separate function to save space
