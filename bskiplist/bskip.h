@@ -8,7 +8,7 @@
  *
  * ============================================================================
  */
-
+// EVOLVE-BLOCK-START
 #ifndef _BSKIP_H_
 #define _BSKIP_H_
 
@@ -835,7 +835,7 @@ private:
                     int level, traits::key_type max);
 };
 
-// EVOLVE-BLOCK-START
+
 
 template <typename traits>
 uint32_t BSkip<traits>::flip_coins(K k)
@@ -1828,7 +1828,6 @@ BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
     return NULL;
 }
 
-// EVOLVE-BLOCK-END
 
 template <typename traits>
 traits::value_type BSkip<traits>::value(traits::key_type k) const
@@ -2843,3 +2842,5 @@ void BSkip<traits>::validate_structure()
 }
 
 #endif
+
+// EVOLVE-BLOCK-END

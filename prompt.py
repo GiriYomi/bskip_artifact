@@ -230,6 +230,7 @@ Constraints:
 
 Be bold, creative, and revolutionary in your approach. The goal is to discover fundamentally better ways to select node heights in skiplist structures."""
 
+# prompt8 is the main prompt for the evolution of the B-skiplist concurrent data structure optimization.
 prompt8 = """# B-Skiplist Concurrent Data Structure Optimization
 
 ## THE PROBLEM
@@ -359,3 +360,119 @@ You are optimizing a concurrent B-skiplist data structure implementation (bskip.
 **Success Criteria:** Deliver a solution that demonstrates measurable throughput improvement through novel algorithmic contributions while maintaining perfect correctness under concurrent execution.
 """
 
+
+# prompt9 is the main prompt for the evolution of the B-skiplist into a lock-free data structure.
+# should be use on full file evolve
+prompt9 = """# Lock-Free B-Skiplist Evolution
+
+## THE PROBLEM
+Transform the current concurrent B-skiplist implementation (bskip.h) into a lock-free data structure while maximizing YCSB throughput. Replace all blocking locks on the hot paths with non-blocking algorithms that provide linearizable semantics. Do NOT change public function signatures, class/struct names, or headers included by ycsb.cpp. The binary must compile with the provided Makefile and produce correct map semantics.
+
+## EVALUATION CRITERIA
+
+**Primary Optimization Goal:**
+- Maximize total YCSB throughput: (load ops/sec) + (run ops/sec)
+
+**Correctness Constraints (Non-Negotiable):**
+1. Semantic correctness:
+   - insert(key, value): inserts key-value preserving sorted order; no duplicates
+   - value(key): returns correct value for existing key; unspecified for missing
+   - map_range(start, end, fn): applies fn to all keys in [start, end) in sorted order
+   - map_range_length(start, len, fn): applies fn to len consecutive keys starting at start
+2. Concurrency safety:
+   - Linearizable semantics for all public operations
+   - Lock-free progress for insert(), value(), exists(); range APIs must be non-blocking (lock-free preferred; obstruction-free or validated-snapshot acceptable)
+   - No data races or undefined behavior
+3. Structural invariants:
+   - Global sorted order within and across nodes/levels
+   - No lost updates, no duplicate keys
+   - Next pointers and next_header remain consistent and monotonic
+4. Compilation requirements:
+   - Compile with provided Makefile
+   - No external dependencies beyond C++20
+   - Preserve all public function signatures and class/struct names
+
+## CONTEXT AND APIS
+- Evolve code only within EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers when present; otherwise keep scope minimal and localized
+- Environment: C++20 on x86-64; std::atomic, fences, and intrinsics available
+- Current code uses per-node locks; your mission is to eliminate blocking locks from hot paths
+
+## LOCK-FREE REQUIREMENTS
+1. Progress guarantees:
+   - insert(), value(), exists(): lock-free (system-wide progress guaranteed)
+   - map_range(), map_range_length(): non-blocking; either lock-free or obstruction-free with validation/snapshot semantics
+2. Linearization points:
+   - Writes: the successful CAS that links a new node/leaf or publishes a new immutable leaf version
+   - Reads: the moment a validated version/tag is observed for the path/leaf being read
+3. Memory reclamation (mandatory):
+   - Implement safe reclamation without external libs: epoch-based reclamation (QSBR/EBR) or hazard pointers; include minimal implementation in this file if needed
+   - Prevent ABA via version/tag bits on pointers or sequence counters
+4. Atomicity and ordering:
+   - Use std::atomic for all shared pointers/headers; publish with release; read with acquire; use CAS with strong ordering at link/install points
+
+## DESIGN DIRECTIONS (HINTS, NOT REQUIREMENTS)
+- Readers: optimistic traversal with version validation (per-node version/tag). If a change is detected, restart from the highest verified level
+- Writers: copy-on-write for leaves (build new leaf image, then publish pointer via CAS); for internal splits, install right sibling first, then publish separator key bottom-up (help-along if in-progress is observed)
+- Use versioned/tagged pointers to encode small state bits (e.g., IN_PROGRESS, DELETED)
+- Child and next pointers are atomic; next_header maintained atomically and validated against child headers
+- Range queries: validated snapshot using per-node version stamps; retry on version change, or traverse immutable leaf images created by concurrent writers
+
+## PROHIBITED
+- Blocking mutexes, reader-writer locks, condition variables on hot paths
+- External GC/RCU libraries or kernel primitives
+- Changing public APIs, includes, or Makefile flags
+
+## IMPLEMENTATION GUIDELINES
+- Keep code readable; document invariants, linearization points, and helping rules
+- Assert ordering invariants (sorted keys; next < next->next; header monotonicity)
+- Minimize CAS width by decomposing multi-step updates into publishable single-word installs with helping where needed
+- Favor cache-friendly immutable leaf images for writers; readers validate versions without copying
+
+## SUCCESS CRITERIA
+- Compiles with the provided Makefile
+- Maintains perfect correctness under stress (no corruption, no deadlocks)
+- Demonstrably higher YCSB throughput than the baseline with locks
+"""
+
+
+prompt10 = """"""
+
+
+
+"""
+A clear and well-scoped problem formulation is the foundation of effective algorithm evolution.
+Provide structured specifications. Many execution and algorithm failures trace back to missing
+context, such as critical details about the problem or absent code API documentation. A welldesigned prompt should be as specific and structured as possible, clearly defining three key areas:
+• The problem: what is the core task to solve.
+• The evaluation criteria: how a solution will be evaluated, including optimization goals and
+correctness constraints.
+• The context: any necessary information, such as required APIs.
+We recommend drafting prompts with external LLMs (e.g., ChatGPT, Gemini, etc.) to craft a structure before launching evolution.
+Provide a suitable base program. The choice of base program strongly shapes the trajectory of
+algorithm evolution. Buggy or weak baselines waste iterations on trivial fixes (budget exhaustion),
+while a strong, clean baseline can accelerate progress toward meaningful improvements. For example, in the LLM-SQL case study, the published baseline already achieved near state-of-the-art prefix
+hit rate; the main bottleneck was runtime, so ∼100 iterations sufficed to evolve a solution that was
+3× faster without loss in PHR.
+Conversely, overly strong baselines that encode near-SOTA solutions or rely on high-level APIs
+can limit the search to shallow micro-optimizations. In the Can’t-be-Late problem (Section 5.1.1),
+evolution from a simple greedy baseline produced better results than starting from the stronger
+Uniform Progress policy, which restricted exploration. We recommend seeding evolution with clean,
+minimal, high-quality baselines, e.g., using coding assistants such as Claude Code.
+Provide suitable solution hints. While a detailed problem specification is always beneficial, the
+value of providing solution hints – specific suggestions for how the system should approach the
+problem – is more nuanced. Too much guidance can risk premature convergence and prevent the
+discovery of novel solutions, while too little can make the search inefficient (i.e., stuck-in-the-loop).
+For example, in the EPLB problem, hints could have prevented wasted iterations on “extreme”
+replication strategies. However, in the transaction scheduling use case, hints about batching biased
+the search toward sub-optimal designs, whereas leaving it unconstrained led to a 30% faster greedy
+policy in OpenEvolve.
+We find that providing intermediate human feedback as hints is especially effective when the search
+gets stuck in the loop. In summary, we recommend trying several prompts with different levels of
+hint specificity and inject relevant hints as how the evolution progresses.
+Choose a suitable level of abstraction. We recommend exposing only the level of abstraction that
+matches your goal. Allowing full access to high-level external library APIs can sometimes lead
+to sub-optimal optimizations: e.g., trivial speedups from replacing custom operators with PyTorch
+primitives, while blocking deeper innovation. To encourage algorithmic advances, restrict API access to help the system explore new strategies rather than rely on pre-built solutions. On the other
+hand, when the goal is execution efficiency, providing optimized library access is appropriate. In
+practice, tuning this boundary between enabling useful shortcuts and enforcing genuine problemsolving is critical to avoid micro-optimizations.
+"""
