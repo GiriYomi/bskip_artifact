@@ -3,7 +3,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 import fcntl
 import time
 import json
@@ -216,6 +216,78 @@ def _parse_throughput(stdout: str, prefix: str = "candidate") -> Dict[str, float
     return metrics
 
 
+def _parse_throughput_samples(stdout: str) -> Dict[str, List[float]]:
+    """Extract raw throughput samples for load and run phases from ycsb output."""
+    run_samples = re.findall(r"Run, throughput: ([\d\.]+) ,ops/us", stdout)
+    load_samples = re.findall(r"Load took \d+ us, throughput = ([\d\.]+) ops/us", stdout)
+    try:
+        run_vals = [float(x) for x in run_samples]
+    except Exception:
+        run_vals = []
+    try:
+        load_vals = [float(x) for x in load_samples]
+    except Exception:
+        load_vals = []
+    return {"run": run_vals, "load": load_vals}
+
+
+def _percentile(sorted_vals: List[float], q: float) -> float:
+    """Nearest-rank percentile (q in [0,100]). Returns 0.0 for empty input."""
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    if q <= 0:
+        return sorted_vals[0]
+    if q >= 100:
+        return sorted_vals[-1]
+    # Nearest-rank method
+    import math
+    rank = max(1, int(math.ceil((q / 100.0) * n)))
+    return sorted_vals[rank - 1]
+
+
+def _compute_stats(vals: List[float]) -> Dict[str, float]:
+    """Compute descriptive stats for a list of floats. Returns zeros if empty."""
+    if not vals:
+        return {
+            "count": 0,
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "stdev": 0.0,
+            "cv": 0.0,
+        }
+    n = len(vals)
+    svals = sorted(vals)
+    total = sum(vals)
+    mean = total / n
+    # Population stdev
+    var = sum((x - mean) ** 2 for x in vals) / n
+    import math
+    stdev = math.sqrt(var)
+    median = _percentile(svals, 50)
+    p90 = _percentile(svals, 90)
+    p95 = _percentile(svals, 95)
+    p99 = _percentile(svals, 99)
+    cv = (stdev / mean) if mean != 0 else 0.0
+    return {
+        "count": float(n),
+        "min": svals[0],
+        "max": svals[-1],
+        "mean": mean,
+        "median": median,
+        "p90": p90,
+        "p95": p95,
+        "p99": p99,
+        "stdev": stdev,
+        "cv": cv,
+    }
+
+
 def _is_significant_improvement(candidate_value: float, baseline_mean: float, baseline_stdev: float) -> bool:
     """Check if candidate value significantly exceeds baseline (mean + 1*sigma)"""
     threshold = baseline_mean + (SIGNIFICANCE_THRESHOLD_SIGMA * baseline_stdev)
@@ -286,7 +358,7 @@ def _evaluate_internal(program_path: str) -> EvaluationResult:
     else:
         dataset_dir = "/mydata/skip_data/uniform/"  # skip_data stays at /mydata
     
-    workload = "c" # TODO change to c, d, e, x, y
+    workload = "a" # TODO change to a, b, c, d, e, x, y
     threads = 32
     output_file = "results/tmp.txt"
     make_env = os.environ.copy()
@@ -316,7 +388,34 @@ def _evaluate_internal(program_path: str) -> EvaluationResult:
             _restore_original(cand_artifacts)
             return EvaluationResult(metrics={"combined_score": -999}, artifacts={"error": f"Candidate run 1 failed: {candidate_result_1['run']['stderr']}"})
         
+        # Parse summary metrics and raw samples for run 1
         candidate_metrics_1 = _parse_throughput(candidate_result_1["run"]["stdout"], "candidate1")
+        cand1_samples = _parse_throughput_samples(candidate_result_1["run"]["stdout"])
+        cand1_load_stats = _compute_stats(cand1_samples["load"])  # ops/us
+        cand1_run_stats = _compute_stats(cand1_samples["run"])    # ops/us
+        # Prefix detailed stats for namespacing
+        candidate_metrics_1.update({
+            "candidate1_load_count": cand1_load_stats["count"],
+            "candidate1_load_min": cand1_load_stats["min"],
+            "candidate1_load_max": cand1_load_stats["max"],
+            "candidate1_load_mean": cand1_load_stats["mean"],
+            "candidate1_load_median": cand1_load_stats["median"],
+            "candidate1_load_p90": cand1_load_stats["p90"],
+            "candidate1_load_p95": cand1_load_stats["p95"],
+            "candidate1_load_p99": cand1_load_stats["p99"],
+            "candidate1_load_stdev": cand1_load_stats["stdev"],
+            "candidate1_load_cv": cand1_load_stats["cv"],
+            "candidate1_run_count": cand1_run_stats["count"],
+            "candidate1_run_min": cand1_run_stats["min"],
+            "candidate1_run_max": cand1_run_stats["max"],
+            "candidate1_run_mean": cand1_run_stats["mean"],
+            "candidate1_run_median": cand1_run_stats["median"],
+            "candidate1_run_p90": cand1_run_stats["p90"],
+            "candidate1_run_p95": cand1_run_stats["p95"],
+            "candidate1_run_p99": cand1_run_stats["p99"],
+            "candidate1_run_stdev": cand1_run_stats["stdev"],
+            "candidate1_run_cv": cand1_run_stats["cv"],
+        })
         print(f"[DEBUG] Candidate run 1 metrics: {candidate_metrics_1}")
         
     except Exception as e:
@@ -334,7 +433,33 @@ def _evaluate_internal(program_path: str) -> EvaluationResult:
             _restore_original(cand_artifacts)
             return EvaluationResult(metrics={"combined_score": -999}, artifacts={"error": f"Candidate run 2 failed: {candidate_result_2['run']['stderr']}"})
         
+        # Parse summary metrics and raw samples for run 2
         candidate_metrics_2 = _parse_throughput(candidate_result_2["run"]["stdout"], "candidate2")
+        cand2_samples = _parse_throughput_samples(candidate_result_2["run"]["stdout"])
+        cand2_load_stats = _compute_stats(cand2_samples["load"])  # ops/us
+        cand2_run_stats = _compute_stats(cand2_samples["run"])    # ops/us
+        candidate_metrics_2.update({
+            "candidate2_load_count": cand2_load_stats["count"],
+            "candidate2_load_min": cand2_load_stats["min"],
+            "candidate2_load_max": cand2_load_stats["max"],
+            "candidate2_load_mean": cand2_load_stats["mean"],
+            "candidate2_load_median": cand2_load_stats["median"],
+            "candidate2_load_p90": cand2_load_stats["p90"],
+            "candidate2_load_p95": cand2_load_stats["p95"],
+            "candidate2_load_p99": cand2_load_stats["p99"],
+            "candidate2_load_stdev": cand2_load_stats["stdev"],
+            "candidate2_load_cv": cand2_load_stats["cv"],
+            "candidate2_run_count": cand2_run_stats["count"],
+            "candidate2_run_min": cand2_run_stats["min"],
+            "candidate2_run_max": cand2_run_stats["max"],
+            "candidate2_run_mean": cand2_run_stats["mean"],
+            "candidate2_run_median": cand2_run_stats["median"],
+            "candidate2_run_p90": cand2_run_stats["p90"],
+            "candidate2_run_p95": cand2_run_stats["p95"],
+            "candidate2_run_p99": cand2_run_stats["p99"],
+            "candidate2_run_stdev": cand2_run_stats["stdev"],
+            "candidate2_run_cv": cand2_run_stats["cv"],
+        })
         print(f"[DEBUG] Candidate run 2 metrics: {candidate_metrics_2}")
         
     except Exception as e:
@@ -356,6 +481,20 @@ def _evaluate_internal(program_path: str) -> EvaluationResult:
     avg_cand_load = (cand1_load + cand2_load) / 2.0
     avg_cand_run = (cand1_run + cand2_run) / 2.0
     
+    # Compute combined per-phase stats across both runs for richer reporting
+    combined_load_stats = _compute_stats(
+        [
+            *(_parse_throughput_samples(candidate_result_1["run"]["stdout"]) ["load"]),
+            *(_parse_throughput_samples(candidate_result_2["run"]["stdout"]) ["load"]),
+        ]
+    )
+    combined_run_stats = _compute_stats(
+        [
+            *(_parse_throughput_samples(candidate_result_1["run"]["stdout"]) ["run"]),
+            *(_parse_throughput_samples(candidate_result_2["run"]["stdout"]) ["run"]),
+        ]
+    )
+
     # Store individual and averaged metrics
     metrics.update({
         "candidate1_median_load_ops_per_us": cand1_load,
@@ -363,12 +502,35 @@ def _evaluate_internal(program_path: str) -> EvaluationResult:
         "candidate2_median_load_ops_per_us": cand2_load,
         "candidate2_median_run_ops_per_us": cand2_run,
         "candidate_avg_load_ops_per_us": avg_cand_load,
-        "candidate_avg_run_ops_per_us": avg_cand_run
+        "candidate_avg_run_ops_per_us": avg_cand_run,
+        # Combined stats across both runs (useful for stability and tails)
+        "combined_load_count": combined_load_stats["count"],
+        "combined_load_min": combined_load_stats["min"],
+        "combined_load_max": combined_load_stats["max"],
+        "combined_load_mean": combined_load_stats["mean"],
+        "combined_load_median": combined_load_stats["median"],
+        "combined_load_p90": combined_load_stats["p90"],
+        "combined_load_p95": combined_load_stats["p95"],
+        "combined_load_p99": combined_load_stats["p99"],
+        "combined_load_stdev": combined_load_stats["stdev"],
+        "combined_load_cv": combined_load_stats["cv"],
+        "combined_run_count": combined_run_stats["count"],
+        "combined_run_min": combined_run_stats["min"],
+        "combined_run_max": combined_run_stats["max"],
+        "combined_run_mean": combined_run_stats["mean"],
+        "combined_run_median": combined_run_stats["median"],
+        "combined_run_p90": combined_run_stats["p90"],
+        "combined_run_p95": combined_run_stats["p95"],
+        "combined_run_p99": combined_run_stats["p99"],
+        "combined_run_stdev": combined_run_stats["stdev"],
+        "combined_run_cv": combined_run_stats["cv"],
     })
     
     print(f"[DEBUG] Run 1: Load={cand1_load:.3f}, Run={cand1_run:.3f}")
     print(f"[DEBUG] Run 2: Load={cand2_load:.3f}, Run={cand2_run:.3f}")
     print(f"[DEBUG] Average: Load={avg_cand_load:.3f}, Run={avg_cand_run:.3f}")
+    print(f"[DEBUG] Combined Load stats: p90={metrics['combined_load_p90']:.3f}, p95={metrics['combined_load_p95']:.3f}, p99={metrics['combined_load_p99']:.3f}, stdev={metrics['combined_load_stdev']:.3f}")
+    print(f"[DEBUG] Combined Run stats:  p90={metrics['combined_run_p90']:.3f},  p95={metrics['combined_run_p95']:.3f},  p99={metrics['combined_run_p99']:.3f},  stdev={metrics['combined_run_stdev']:.3f}")
     
     # Step 5: Compare against baseline and check significance
     print("[DEBUG] Step 5: Comparing against baseline and checking statistical significance...")

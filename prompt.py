@@ -435,7 +435,72 @@ Transform the current concurrent B-skiplist implementation (bskip.h) into a lock
 """
 
 
-prompt10 = """"""
+prompt10 = """# Full-File Evolution: Maximum Exploration with Strong Guardrails
+
+## THE PROBLEM
+Evolve the entire B-skiplist implementation in `bskip.h` to maximize YCSB performance while preserving full map semantics and build compatibility. You have broad freedom to redesign internal algorithms, data layouts, and concurrency mechanisms. This is a full-file evolution prompt intended to encourage deep exploration of radically different designs, not local micro-optimizations.
+
+## EVALUATION CRITERIA
+
+Primary objective:
+- Maximize total YCSB throughput: (load ops/sec) + (run ops/sec), with the load stage inserting 100M keys.
+
+Secondary objectives (tie-breakers, do not violate correctness for them):
+- Reduce P95/P99 latency for reads and inserts.
+- Reduce lock contention and retry/abort rates if applicable.
+- Maintain or reduce memory footprint relative to baseline.
+
+Hard correctness constraints (non-negotiable):
+1. Semantic correctness of public operations must match a concurrent sorted map:
+   - insert(key, value): inserts key-value pair; no duplicates; maintains global sorted order
+   - value(key): returns the correct value for existing keys; unspecified for missing keys
+   - map_range(start, end, fn): applies fn in sorted order for keys in [start, end)
+   - map_range_length(start, len, fn): applies fn in sorted order for the next len keys starting at start
+2. Concurrency safety: no data races, deadlocks, or undefined behavior; operations are linearizable.
+3. Structural invariants: global sorted order across all levels; valid next/child pointers; headers monotonically increasing; no lost inserts or duplicate keys.
+4. Build and integration: must compile with the provided Makefile; no external dependencies beyond C++20; do not change public function signatures, class/struct names, or headers used by `ycsb.cpp`.
+
+Practical context (driver behavior):
+- YCSB driver uses `insert({key,value})` during load and `value(key)` for READ operations during run; range APIs are also exercised depending on workload.
+- Typical configuration uses template traits like `BSkip_traits<true, p, promotion_rate, Key, TID>` and large node sizes to emphasize cache locality.
+
+## SCOPE FOR EXPLORATION (GO BROAD!)
+You have wide latitude to explore fundamentally different approaches. Consider, but do not limit yourself to:
+- Concurrency paradigms: lock-free/wait-free reads and/or writes; optimistic hand-over-hand with validation; versioned/tagged pointers; epoch-based reclamation (QSBR/EBR) or hazard pointers implemented locally; HTM fast paths with lock fallback.
+- Search/traversal: novel level selection; adaptive or predictive traversal; prefetching; two-finger or bidirectional walks; auxiliary side-indexes or fence-pointer tables.
+- Node organization: cache-friendly layouts; SoA vs AoS; SIMD-accelerated scans; succinct/bit-packed keys; tiered nodes with small/large pages; immutable leaf images for fast readers.
+- Height/promotion policy: workload-aware height control; learned or heuristic promotion; periodic rebalancing; background compaction or coalescing.
+- Range queries: snapshot/validated traversal; iterator stability via versioning/tombstones with safe reclamation.
+- Workload adaptation: online tuning of probabilities, node sizes, batching; lightweight instrumentation to adapt behavior (off by default in the final build unless guarded by macros).
+
+Important: Exploring radically different designs is encouraged. Prefer one bold idea per iteration to avoid premature convergence from combining many small tweaks.
+
+## IMPLEMENTATION GUIDELINES
+- Preserve all public function signatures and names referenced by `ycsb.cpp`.
+- Keep code self-contained in `bskip.h`; use only C++20 and permitted intrinsics. No external libraries.
+- Clearly mark linearization points and invariants in comments where applicable.
+- Use `std::atomic` with acquire/release semantics appropriately; avoid undefined behavior under the C++ memory model.
+- If employing non-blocking techniques, include a minimal, well-documented reclamation scheme (e.g., simple epoch/QSBR or hazard pointers) implemented locally in this file.
+- Maintain readability: descriptive names, minimal nesting, concise but meaningful assertions.
+- Prefer compile-time switches (e.g., macros or small enum strategies) to enable A/B experimentation across approaches without changing the public interface.
+
+## PROHIBITED
+- Changing public APIs (signatures), class/struct names, or headers included by `ycsb.cpp`.
+- Adding external dependencies or modifying the Makefile/toolchain.
+- Sacrificing correctness or linearizability to gain speed.
+
+## SUCCESS CRITERIA
+- Compiles cleanly with the provided Makefile.
+- Passes functional behavior of a concurrent sorted map under the YCSB driver.
+- Demonstrably improves total YCSB throughput (load + run). Lower tail latencies and reduced contention are a plus.
+
+## REMINDERS
+- Reads in YCSB call `value(key)`; ensure the read path is highly optimized and safe under concurrency.
+- Inserts dominate the load stage and are common in run; insertion fast path matters greatly.
+- Range APIs must remain correct; if made obstruction-free, implement robust validation/snapshotting.
+
+Be bold and exploratory. Favor deep, architectural innovations over superficial tweaks. The goal is to unlock significant performance gains while preserving airtight correctness.
+"""
 
 
 
