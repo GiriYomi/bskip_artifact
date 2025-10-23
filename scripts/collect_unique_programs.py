@@ -221,7 +221,7 @@ def write_final_metadata(checkpoints_root: str, final_dir: str, mapping: Dict[st
 def main():
     parser = argparse.ArgumentParser(description="Collect all unique OpenEvolve programs across checkpoints")
     parser.add_argument('--path', 
-        default='/Users/girigiri_yomi/Udel_Proj/bskip_artifact/EvolveResult/result_trace_complex_prompt_iter100',
+        default='/Users/girigiri_yomi/Udel_Proj/bskip_artifact/openevolve_output_lock_free', # TODO change this
         help='Path to OpenEvolve run (contains checkpoints/) or the checkpoints/ directory itself')
     parser.add_argument('--dry-run', action='store_true', help='Scan and report without copying files')
     parser.add_argument('--log-level', default='INFO', help='Logging level (DEBUG, INFO, WARNING, ERROR)')
