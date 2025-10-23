@@ -176,7 +176,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--path",
         type=str,
-        default="/Users/girigiri_yomi/Udel_Proj/bskip_artifact/openevolve_output_p8_insertvalue_100iter/checkpoints/checkpoint_100",
+        default="/Users/girigiri_yomi/Udel_Proj/bskip_artifact/openevolve_output_fullfile_p0_100iter/checkpoints/checkpoint_10",
         help="Path to openevolve_output or checkpoints folder",
     )
     parser.add_argument("--host", type=str, default="127.0.0.1")

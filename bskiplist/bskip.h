@@ -9,7 +9,7 @@
  * ============================================================================
  */
 
-// EVOLVE-BLOCK-START
+
 #ifndef _BSKIP_H_
 #define _BSKIP_H_
 
@@ -836,6 +836,7 @@ private:
                     int level, traits::key_type max);
 };
 
+// EVOLVE-BLOCK-START
 
 template <typename traits>
 uint32_t BSkip<traits>::flip_coins(K k)
@@ -1671,168 +1672,6 @@ bool BSkip<traits>::insert(traits::element_type k)
 
 
 template <typename traits>
-BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
-{
-    // TODO: deal with if if you look for 0. should this return true for the
-    // unweighted case and the val in the weighted case? why is the node the thing
-    // getting returned?
-#if DEBUG_PRINT
-    printf("searching for %lu\n", k);
-#endif
-
-    // int cpuid = ParallelTools::getWorkerNum();
-    int cpuid = sched_getcpu();
-    ReaderWriterLock *parent_lock = nullptr;
-
-    // start search from the top node
-    auto curr_node = headers[MAX_HEIGHT - 1];
-
-    // should never be here because the header always has something init
-    if (!curr_node)
-    {
-        assert(false);
-    }
-
-    for (int level = MAX_HEIGHT - 1; level >= 0; level--)
-    {
-        if constexpr (traits::concurrent)
-        {
-            // grab current lock
-            if (level > 0)
-            {
-           	#if STATS
-            	read_lock_counter++;
-            #endif
-                ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_lock(cpuid);
-            }
-            else
-            {
-           	#if STATS
-            	read_lock_counter++;
-            #endif
-                ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.read_lock(cpuid);
-            }
-
-            // if you have a parent, release it
-            if (parent_lock)
-            {
-                parent_lock->read_unlock(cpuid);
-            }
-        }
-        tbassert(k >= curr_node->get_header(),
-                 "level = %u, k = %lu, header = %lu\n", level, k,
-                 curr_node->get_header());
-
-        auto prev_node = curr_node;
-
-        // move forward until we find the right node that contains the key range
-        while (curr_node->next_header <= k)
-        {
-#if DEBUG_PRINT
-            printf("\tcurr node header %lu\n", curr_node->get_header());
-            printf("\tnext node header %lu\n", curr_node->next->get_header());
-#endif
-            assert(curr_node->get_header() < curr_node->next->get_header());
-
-            tbassert(k >= curr_node->get_header(),
-                     "key = %lu, curr node header = %lu, next node header = %lu\n", k,
-                     curr_node->get_header(), curr_node->next->get_header());
-#if DEBUG
-            auto next_header = curr_node->next->get_header();
-#endif
-            // grab next step in the search
-            if constexpr (traits::concurrent)
-            {
-                if (level > 0)
-                {
-               	#if STATS
-                	read_lock_counter++;
-                #endif
-                    ((BSkipNodeInternal<traits> *)(curr_node->next))
-                        ->mutex_.read_lock(cpuid);
-                }
-                else
-                {
-               	#if STATS
-                	read_lock_counter++;
-                #endif
-                    ((BSkipNodeLeaf<traits> *)(curr_node->next))->mutex_.read_lock(cpuid);
-                }
-            }
-
-            tbassert(next_header >= curr_node->next->get_header(),
-                     "next header before lock %lu, next header after lock %lu\n",
-                     next_header, curr_node->next->get_header());
-
-            prev_node = curr_node;
-
-            tbassert(curr_node->next->get_header() <= k,
-                     "k = %lu, prev node = %lu, next node = %lu\n", k,
-                     prev_node->get_header(), curr_node->next->get_header());
-
-            curr_node = curr_node->next;
-
-            // unlock prev node
-            if constexpr (traits::concurrent)
-            {
-                if (level > 0)
-                {
-                    ((BSkipNodeInternal<traits> *)(prev_node))->mutex_.read_unlock(cpuid);
-                }
-                else
-                {
-                    ((BSkipNodeLeaf<traits> *)(prev_node))->mutex_.read_unlock();
-                }
-            }
-        }
-        assert(curr_node->get_header() <= k);
-
-        // look for the largest element that is at most the search key
-        auto [rank, found_key] = curr_node->find_key_and_check(k);
-
-        // if it is found, return the node (returns the topmost node the key is
-        // found in
-        if (curr_node->get_key_at_rank(rank) == k)
-        {
-#if DEBUG_PRINT
-            printf("found key at rank %u\n", rank);
-            curr_node->print_keys();
-#endif
-
-            // unlock your current node
-            if constexpr (traits::concurrent)
-            {
-                if (level > 0)
-                {
-                    ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_unlock(cpuid);
-                }
-                else
-                {
-                    ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.read_unlock();
-                }
-            }
-
-            return curr_node;
-        }
-
-        // if not found, drop down a level
-        if (level > 0)
-        {
-            if constexpr (traits::concurrent)
-            {
-                parent_lock = &(((BSkipNodeInternal<traits> *)curr_node)->mutex_);
-            }
-
-            curr_node =
-                ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
-        }
-    }
-    return NULL;
-}
-
-
-
-template <typename traits>
 traits::value_type BSkip<traits>::value(traits::key_type k) const
 {
     // TODO: deal with if if you look for 0. should this return true for the
@@ -2083,6 +1922,168 @@ traits::value_type BSkip<traits>::value(traits::key_type k) const
     this->steps_vector.push_back(local_step_counter);
 #endif
 
+    return NULL;
+}
+
+// EVOLVE-BLOCK-END
+
+template <typename traits>
+BSkipNode<traits> *BSkip<traits>::find(traits::key_type k) const
+{
+    // TODO: deal with if if you look for 0. should this return true for the
+    // unweighted case and the val in the weighted case? why is the node the thing
+    // getting returned?
+#if DEBUG_PRINT
+    printf("searching for %lu\n", k);
+#endif
+
+    // int cpuid = ParallelTools::getWorkerNum();
+    int cpuid = sched_getcpu();
+    ReaderWriterLock *parent_lock = nullptr;
+
+    // start search from the top node
+    auto curr_node = headers[MAX_HEIGHT - 1];
+
+    // should never be here because the header always has something init
+    if (!curr_node)
+    {
+        assert(false);
+    }
+
+    for (int level = MAX_HEIGHT - 1; level >= 0; level--)
+    {
+        if constexpr (traits::concurrent)
+        {
+            // grab current lock
+            if (level > 0)
+            {
+           	#if STATS
+            	read_lock_counter++;
+            #endif
+                ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_lock(cpuid);
+            }
+            else
+            {
+           	#if STATS
+            	read_lock_counter++;
+            #endif
+                ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.read_lock(cpuid);
+            }
+
+            // if you have a parent, release it
+            if (parent_lock)
+            {
+                parent_lock->read_unlock(cpuid);
+            }
+        }
+        tbassert(k >= curr_node->get_header(),
+                 "level = %u, k = %lu, header = %lu\n", level, k,
+                 curr_node->get_header());
+
+        auto prev_node = curr_node;
+
+        // move forward until we find the right node that contains the key range
+        while (curr_node->next_header <= k)
+        {
+#if DEBUG_PRINT
+            printf("\tcurr node header %lu\n", curr_node->get_header());
+            printf("\tnext node header %lu\n", curr_node->next->get_header());
+#endif
+            assert(curr_node->get_header() < curr_node->next->get_header());
+
+            tbassert(k >= curr_node->get_header(),
+                     "key = %lu, curr node header = %lu, next node header = %lu\n", k,
+                     curr_node->get_header(), curr_node->next->get_header());
+#if DEBUG
+            auto next_header = curr_node->next->get_header();
+#endif
+            // grab next step in the search
+            if constexpr (traits::concurrent)
+            {
+                if (level > 0)
+                {
+               	#if STATS
+                	read_lock_counter++;
+                #endif
+                    ((BSkipNodeInternal<traits> *)(curr_node->next))
+                        ->mutex_.read_lock(cpuid);
+                }
+                else
+                {
+               	#if STATS
+                	read_lock_counter++;
+                #endif
+                    ((BSkipNodeLeaf<traits> *)(curr_node->next))->mutex_.read_lock(cpuid);
+                }
+            }
+
+            tbassert(next_header >= curr_node->next->get_header(),
+                     "next header before lock %lu, next header after lock %lu\n",
+                     next_header, curr_node->next->get_header());
+
+            prev_node = curr_node;
+
+            tbassert(curr_node->next->get_header() <= k,
+                     "k = %lu, prev node = %lu, next node = %lu\n", k,
+                     prev_node->get_header(), curr_node->next->get_header());
+
+            curr_node = curr_node->next;
+
+            // unlock prev node
+            if constexpr (traits::concurrent)
+            {
+                if (level > 0)
+                {
+                    ((BSkipNodeInternal<traits> *)(prev_node))->mutex_.read_unlock(cpuid);
+                }
+                else
+                {
+                    ((BSkipNodeLeaf<traits> *)(prev_node))->mutex_.read_unlock();
+                }
+            }
+        }
+        assert(curr_node->get_header() <= k);
+
+        // look for the largest element that is at most the search key
+        auto [rank, found_key] = curr_node->find_key_and_check(k);
+
+        // if it is found, return the node (returns the topmost node the key is
+        // found in
+        if (curr_node->get_key_at_rank(rank) == k)
+        {
+#if DEBUG_PRINT
+            printf("found key at rank %u\n", rank);
+            curr_node->print_keys();
+#endif
+
+            // unlock your current node
+            if constexpr (traits::concurrent)
+            {
+                if (level > 0)
+                {
+                    ((BSkipNodeInternal<traits> *)(curr_node))->mutex_.read_unlock(cpuid);
+                }
+                else
+                {
+                    ((BSkipNodeLeaf<traits> *)(curr_node))->mutex_.read_unlock();
+                }
+            }
+
+            return curr_node;
+        }
+
+        // if not found, drop down a level
+        if (level > 0)
+        {
+            if constexpr (traits::concurrent)
+            {
+                parent_lock = &(((BSkipNodeInternal<traits> *)curr_node)->mutex_);
+            }
+
+            curr_node =
+                ((BSkipNodeInternal<traits> *)curr_node)->get_child_at_rank(rank);
+        }
+    }
     return NULL;
 }
 
@@ -2848,4 +2849,4 @@ void BSkip<traits>::validate_structure()
 
 #endif
 
-// EVOLVE-BLOCK-END
+
