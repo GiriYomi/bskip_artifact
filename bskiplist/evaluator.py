@@ -358,7 +358,7 @@ def _evaluate_internal(program_path: str) -> EvaluationResult:
     else:
         dataset_dir = "/mydata/skip_data/uniform/"  # skip_data stays at /mydata
     
-    workload = "a" # TODO change to a, b, c, d, e, x, y
+    workload = "e" # TODO change to a, b, c, d, e, x, y
     threads = 32
     output_file = "results/tmp.txt"
     make_env = os.environ.copy()
