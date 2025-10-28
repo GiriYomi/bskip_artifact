@@ -37,16 +37,18 @@ async def main(prompt_num: int) -> None:
 
     # Configure OpenEvolve for the bskiplist C++ optimization task
     config = Config(
-        max_iterations=100,
+        max_iterations=5,
         checkpoint_interval=1,
         diff_based_evolution=True,
         max_code_length=300000,
+        language='cpp',
+        
         llm=LLMConfig(
             api_base='https://api.openai.com/v1',
             api_key=os.environ.get('OPENAI_API_KEY'),
             models=[
-                LLMModelConfig(name='gpt-5', weight=0.2),
-                LLMModelConfig(name='gpt-5-mini', weight=0.8)
+                LLMModelConfig(name='gpt-5', weight=1), # for experiment
+                # LLMModelConfig(name='gpt-5-mini', weight=0.8)
             ],
             evaluator_models=[
                 LLMModelConfig(name='gpt-5', weight=1),
