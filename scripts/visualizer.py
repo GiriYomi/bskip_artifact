@@ -37,9 +37,24 @@ def load_evolution_data(checkpoint_folder):
 
     nodes = []
     id_to_program = {}
+    # Optional: read manifest.json (if present) to obtain first-seen iteration per program
+    manifest_iter_by_id = {}
+    manifest_path = os.path.join(checkpoint_folder, "manifest.json")
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as mf:
+                items = json.load(mf)
+            if isinstance(items, list):
+                for it in items:
+                    pid = it.get("id")
+                    itn = it.get("iteration")
+                    if isinstance(pid, str) and itn is not None:
+                        manifest_iter_by_id[pid] = itn
+        except Exception as e:
+            logger.debug(f"Unable to read manifest.json in {checkpoint_folder}: {e}")
     pids = set()
     for island_idx, id_list in enumerate(meta.get("islands", [])):
-        for pid in id_list:
+        for gen_idx, pid in enumerate(id_list):
             prog_path = os.path.join(programs_dir, f"{pid}.json")
 
             # Keep track of PIDs and if one is double, append "-copyN" to the PID
@@ -62,6 +77,17 @@ def load_evolution_data(checkpoint_folder):
                     prog = json.load(pf)
                 prog["id"] = pid
                 prog["island"] = island_idx
+                # Fill in generation if missing: use position within island list
+                if prog.get("generation") is None:
+                    try:
+                        prog["generation"] = int(gen_idx)
+                    except Exception:
+                        prog["generation"] = gen_idx
+                # Normalize iteration_found: prefer embedded, else from manifest by base id
+                if prog.get("iteration_found") is None and prog.get("iteration") is None and manifest_iter_by_id:
+                    base_id = pid.split("-copy", 1)[0]
+                    if base_id in manifest_iter_by_id:
+                        prog["iteration_found"] = manifest_iter_by_id[base_id]
                 nodes.append(prog)
                 id_to_program[pid] = prog
             else:
@@ -176,10 +202,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--path",
         type=str,
-        default="/Users/girigiri_yomi/Udel_Proj/bskip_artifact/openevolve_output_lock_free/checkpoints/checkpoint_10",
+        default="/Users/girigiri_yomi/Udel_Proj/bskip_artifact/openevolve_output_scope_1/checkpoints/checkpoint_5",
         help="Path to openevolve_output or checkpoints folder",
     )
-    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument(
         "--log-level",
