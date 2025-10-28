@@ -1,11 +1,12 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 set -e
 set -u
 set -o pipefail
 
-ROOT=""
-OUT_DIR="/bskiplist/openevolve_output"
+# Resolve repo root as the directory containing this script
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+OUT_DIR="$ROOT/bskiplist/openevolve_output"
 
 cd "$ROOT"
 
