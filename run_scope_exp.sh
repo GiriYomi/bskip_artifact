@@ -4,8 +4,8 @@ set -e
 set -u
 set -o pipefail
 
-ROOT="/opt"
-OUT_DIR="$ROOT/bskiplist/openevolve_output"
+ROOT=""
+OUT_DIR="/bskiplist/openevolve_output"
 
 cd "$ROOT"
 
